@@ -563,6 +563,54 @@ cd apps/example && bun run dev
 
 ---
 
+## AI Agent Integration
+
+This repository is optimized for AI coding agents. The following context files provide agent-specific instructions and project context:
+
+| File | Agent / Tool | Purpose |
+|------|-------------|---------|
+| [`CLAUDE.md`](CLAUDE.md) | Claude Code, Claude agents | Full project context, architecture, conventions |
+| [`AGENTS.md`](AGENTS.md) | OpenAI Codex, general agents | Agent routing, coding rules, common tasks |
+| [`CODEX.md`](CODEX.md) | OpenAI Codex / ChatGPT | Stack summary, file map, conventions |
+| [`llms.txt`](llms.txt) | Any LLM | Machine-readable API reference ([llmstxt.org](https://llmstxt.org) format) |
+| [`.github/copilot-instructions.md`](.github/copilot-instructions.md) | GitHub Copilot | VS Code / JetBrains Copilot context |
+| [`.cursor/rules/bao-boss.mdc`](.cursor/rules/bao-boss.mdc) | Cursor | Cursor IDE rules |
+| [`.clinerules`](.clinerules) | Cline | Cline agent rules |
+| [`.windsurfrules`](.windsurfrules) | Windsurf | Windsurf agent rules |
+
+### Using with AI Agents
+
+**Claude Code / Claude agents** read `CLAUDE.md` automatically. It contains the full architecture, conventions, and development patterns.
+
+**GitHub Copilot** reads `.github/copilot-instructions.md` for workspace context in VS Code and JetBrains.
+
+**Cursor** loads `.cursor/rules/bao-boss.mdc` automatically when working with TypeScript, Prisma, or SQL files.
+
+**Other agents** (Cline, Windsurf, Aider, Continue, Zed AI) each have their respective config files.
+
+**`llms.txt`** follows the [llmstxt.org](https://llmstxt.org) specification -- a machine-readable plain-text format designed for LLM context ingestion. It contains the complete API surface, configuration options, and project structure in a format optimized for AI consumption.
+
+### For AI Agent Developers
+
+If you are building an AI agent that interacts with bao-boss:
+
+1. **Start with `llms.txt`** for a complete API overview
+2. **Read `CLAUDE.md`** for architecture decisions and code patterns
+3. **Check `packages/bao-boss/src/types.ts`** for all TypeScript interfaces
+4. **Review `packages/bao-boss/prisma/schema.prisma`** for the database schema
+5. **See `apps/example/src/index.ts`** for a working integration example
+
+### Request Flow (for AI context)
+
+```
+browser/client -> boss.send("queue", payload) -> INSERT INTO baoboss.job
+                  boss.work("queue", handler)  -> SELECT ... FOR UPDATE SKIP LOCKED
+                                               -> handler(jobs)
+                                               -> UPDATE state = 'completed'
+```
+
+---
+
 ## License
 
 MIT
