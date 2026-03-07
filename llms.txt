@@ -1,0 +1,174 @@
+# bao-boss
+
+> Bun-native job queue library built on PostgreSQL — reliable background job processing with SKIP LOCKED concurrency, automatic retries, cron scheduling, pub/sub fan-out, dead letter queues, and an HTMX dashboard.
+
+## Overview
+
+bao-boss is a PostgreSQL-backed job queue designed for the Bun runtime. It uses `SELECT ... FOR UPDATE SKIP LOCKED` for reliable concurrent job fetching, supports configurable retry policies with exponential backoff, cron-based scheduling, event-driven pub/sub, dead letter queues, and includes a built-in HTMX dashboard as an Elysia plugin.
+
+## Quick Start
+
+Install with Bun:
+
+```bash
+bun add bao-boss
+```
+
+Basic usage:
+
+```typescript
+import { BaoBoss } from 'bao-boss'
+
+const boss = new BaoBoss({ connectionString: Bun.env['DATABASE_URL'] })
+await boss.start()
+
+await boss.createQueue('emails', { retryLimit: 3, retryBackoff: true })
+const id = await boss.send('emails', { to: 'user@example.com', subject: 'Hello' })
+
+await boss.work('emails', async ([job]) => {
+  console.log('Sending email to:', job.data.to)
+})
+```
+
+## Stack
+
+- Runtime: Bun (native APIs, test runner)
+- HTTP: Elysia (dashboard plugin)
+- ORM: Prisma 7 + PrismaPg adapter (datasource in prisma.config.ts) + raw SQL (SKIP LOCKED)
+- Dashboard: htmx (server-rendered HTML)
+- Language: TypeScript (strict mode)
+- Database: PostgreSQL 15+ (SKIP LOCKED, pgcrypto)
+
+## Core Concepts
+
+### Job States
+created -> active -> completed
+active -> created (fail with retries remaining)
+active -> failed (fail with retries exhausted / expire)
+failed -> DLQ (deadLetter configured, copy)
+created | active -> cancelled
+cancelled | failed -> created (resume)
+
+### Queue Policies
+- standard: Default FIFO, multiple jobs allowed
+- short: At most one created job at a time
+- singleton: At most one active job at a time
+- stately: At most one created + one active simultaneously
+
+### SKIP LOCKED
+Jobs are fetched using PostgreSQL `SELECT ... FOR UPDATE SKIP LOCKED`, ensuring multiple workers can safely poll the same queue without conflicts.
+
+## API
+
+### Lifecycle
+- `new BaoBoss(options?)` — Create instance
+- `boss.start()` — Connect and start maintenance
+- `boss.stop()` — Graceful shutdown
+
+### BaoBoss Options
+- connectionString: string (default: DATABASE_URL env)
+- prisma: PrismaClient (bring your own)
+- schema: string (default: 'baoboss') — multi-tenant isolation
+- connectionPool: { min?, max?, idleTimeoutMillis?, statementTimeout? }
+- maintenanceIntervalSeconds: number (default: 120)
+- archiveCompletedAfterSeconds: number (default: 43200)
+- deleteArchivedAfterDays: number (default: 7)
+- noSupervisor: boolean (default: false)
+- shutdownGracePeriodSeconds: number (default: 30)
+- onBeforeFetch: (queue: string) => Promise<void>
+- onAfterComplete: (jobs: Job[]) => Promise<void>
+- onRetry: (job: Job, error: Error) => Promise<void>
+
+### Queue Management
+- `boss.createQueue(name, options?)` — Create a queue
+- `boss.updateQueue(name, options)` — Update queue settings
+- `boss.pauseQueue(name)` — Pause queue (no fetch)
+- `boss.resumeQueue(name)` — Resume queue
+- `boss.deleteQueue(name)` — Delete queue and all jobs
+- `boss.purgeQueue(name)` — Delete pending jobs
+- `boss.getQueue(name)` — Get queue config
+- `boss.getQueues()` — List all queues
+- `boss.getQueueSize(name, options?)` — Count pending/active jobs
+
+### CreateQueue Options
+- policy: 'standard' | 'short' | 'singleton' | 'stately'
+- retryLimit, retryDelay, retryBackoff, retryJitter
+- expireIn, retentionDays, deadLetter
+- rateLimit: { count, period }
+- debounce: number (seconds)
+- fairness: { lowPriorityShare: number }
+
+### Job Operations
+- `boss.send(queue, data?, options?)` — Send a job (returns UUID)
+- `boss.insert(jobs)` — Batch insert jobs
+- `boss.fetch(queue, options?)` — Manually fetch and lock jobs
+- `boss.complete(id, options?)` — Mark job completed
+- `boss.fail(id, error?)` — Mark job failed (with retry logic)
+- `boss.cancel(id)` — Cancel a job
+- `boss.resume(id)` — Re-enqueue cancelled/failed job
+- `boss.getJobById(id)` — Get job by UUID
+- `boss.getJobsById(ids)` — Get multiple jobs
+- `boss.progress(id, value)` — Update job progress (0-100)
+- `boss.getDLQDepth(deadLetterQueueName)` — Count jobs in DLQ
+
+### Send Options
+- priority, startAfter, retryLimit, retryDelay, retryBackoff, retryJitter
+- expireIn, expireIfNotStartedIn
+- singletonKey, deadLetter, dependsOn: string[]
+
+### Workers
+- `boss.work(queue, options?, handler)` — Start polling worker
+- `boss.offWork(queueOrId)` — Stop worker(s)
+
+### Work Options
+- batchSize, pollingIntervalSeconds, includeMetadata, priority
+- maxConcurrency, handlerTimeoutSeconds
+
+### Scheduling
+- `boss.schedule(name, cron, data?, options?)` — Create cron schedule
+- `boss.unschedule(name)` — Remove schedule
+- `boss.getSchedules()` — List schedules
+
+### Pub/Sub
+- `boss.publish(event, data?, options?)` — Fan-out to subscribed queues
+- `boss.subscribe(event, queue)` — Subscribe queue to event
+- `boss.unsubscribe(event, queue)` — Unsubscribe
+
+### Migration & Metrics
+- `boss.migrate()` — Run Prisma migrations
+- `migrate(prisma)`, `ensureSchemaVersion(prisma)` — from 'bao-boss'
+- `getMetricsSnapshot()`, `getQueueDepths(prisma)`, `toPrometheusFormat(snapshot)` — from 'bao-boss'
+
+### Dashboard
+- `baoBossDashboard(boss, options?)` — Elysia plugin (from 'bao-boss/dashboard')
+- Options: prefix, auth, dashboardAuth (bearer or better-auth), csrf, rateLimit, lang, locale
+- Routes: GET /boss, /boss/queues, /boss/queues/:name, /boss/jobs/:id, /boss/schedules, /boss/stats, /boss/metrics, /boss/sse/progress/:id
+- POST /boss/jobs/:id/retry, DELETE /boss/jobs/:id, DELETE /boss/schedules/:name
+
+## Database Schema
+
+All tables in `baoboss` PostgreSQL schema:
+- `baoboss.job` — Jobs with state, retry info, payload
+- `baoboss.job_dependency` — DAG dependencies between jobs
+- `baoboss.queue` — Queue config and policies
+- `baoboss.schedule` — Cron schedules
+- `baoboss.subscription` — Pub/sub mappings
+- `baoboss.cron_lock` — Distributed lock for cron firing
+- `baoboss.debounce_state` — Debounced queue flush state
+- `baoboss.schema_version` — Migration tracking
+
+## Events
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| error | Error | Unhandled errors |
+| stopped | — | Instance stopped |
+| progress | { id, queue, progress } | Job progress updated |
+| dlq | { jobId, queue, deadLetter } | Job moved to dead letter queue |
+
+## Source
+
+- Repository: https://github.com/d4551/bao-boss
+- License: MIT
+- Runtime: Bun >= 1.1
+- Database: PostgreSQL 15+

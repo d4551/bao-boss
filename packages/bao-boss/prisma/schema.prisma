@@ -1,0 +1,147 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  schemas  = ["baoboss"]
+}
+
+model Job {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  queue                String
+  priority             Int       @default(0)
+  data                 Json?
+  state                JobState  @default(created)
+  retryLimit           Int       @default(2)
+  retryCount           Int       @default(0)
+  retryDelay           Int       @default(0)
+  retryBackoff         Boolean   @default(false)
+  retryJitter          Boolean   @default(false)
+  startAfter           DateTime  @default(now()) @db.Timestamptz
+  startedOn            DateTime? @db.Timestamptz
+  expireIn             Int       @default(900)
+  expireIfNotStartedIn Int?
+  createdOn            DateTime  @default(now()) @db.Timestamptz
+  completedOn          DateTime? @db.Timestamptz
+  keepUntil            DateTime  @default(dbgenerated("now() + interval '14 days'")) @db.Timestamptz
+  singletonKey         String?
+  output               Json?
+  deadLetter           String?
+  policy               String?
+  progress             Int?
+
+  dependencies JobDependency[] @relation("JobDependsOn")
+  dependents   JobDependency[] @relation("JobDependedBy")
+
+  @@index([queue, state, startAfter, priority(sort: Desc)])
+  @@map("job")
+  @@schema("baoboss")
+}
+
+model JobDependency {
+  jobId        String @db.Uuid
+  dependsOnId  String @db.Uuid
+
+  job       Job @relation("JobDependsOn", fields: [jobId], references: [id], onDelete: Cascade)
+  dependsOn Job @relation("JobDependedBy", fields: [dependsOnId], references: [id], onDelete: Cascade)
+
+  @@id([jobId, dependsOnId])
+  @@map("job_dependency")
+  @@schema("baoboss")
+}
+
+model Queue {
+  name          String   @id
+  policy        Policy   @default(standard)
+  retryLimit    Int      @default(2)
+  retryDelay    Int      @default(0)
+  retryBackoff  Boolean  @default(false)
+  retryJitter   Boolean  @default(false)
+  expireIn      Int      @default(900)
+  retentionDays Int      @default(14)
+  deadLetter    String?
+  paused        Boolean  @default(false)
+  rateLimit     Json?
+  debounce      Int?
+  fairness      Json?
+  createdOn     DateTime @default(now()) @db.Timestamptz
+  updatedOn     DateTime @updatedAt @db.Timestamptz
+
+  @@map("queue")
+  @@schema("baoboss")
+}
+
+model Schedule {
+  name        String   @id
+  cron        String
+  timezone    String   @default("UTC")
+  data        Json?
+  options     Json?
+  createdOn   DateTime @default(now()) @db.Timestamptz
+  updatedOn   DateTime @updatedAt @db.Timestamptz
+
+  @@map("schedule")
+  @@schema("baoboss")
+}
+
+model Subscription {
+  event     String
+  queue     String
+  createdOn DateTime @default(now()) @db.Timestamptz
+
+  @@id([event, queue])
+  @@map("subscription")
+  @@schema("baoboss")
+}
+
+model CronLock {
+  scheduleName  String
+  minuteBucket  String
+  lockedUntil   DateTime @db.Timestamptz
+  instanceId   String
+
+  @@id([scheduleName, minuteBucket])
+  @@map("cron_lock")
+  @@schema("baoboss")
+}
+
+model DebounceState {
+  queue         String
+  debounceKey   String   @default("default")
+  dataAggregate Json?
+  debounceUntil DateTime @db.Timestamptz
+  updatedOn     DateTime @updatedAt @db.Timestamptz
+
+  @@id([queue, debounceKey])
+  @@map("debounce_state")
+  @@schema("baoboss")
+}
+
+model SchemaVersion {
+  version   Int      @id
+  appliedAt DateTime @default(now()) @db.Timestamptz
+
+  @@map("schema_version")
+  @@schema("baoboss")
+}
+
+enum JobState {
+  created
+  active
+  completed
+  cancelled
+  failed
+
+  @@schema("baoboss")
+}
+
+enum Policy {
+  standard
+  short
+  singleton
+  stately
+
+  @@schema("baoboss")
+}

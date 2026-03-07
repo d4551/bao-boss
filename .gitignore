@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.so.node
+.env
+.env.*
+!.env.example
+
+# Lockfiles — Bun project uses bun.lock only
+package-lock.json
+
+# Prisma v7 generated client
+packages/bao-boss/src/generated/

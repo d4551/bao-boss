@@ -1,0 +1,102 @@
+/** Message keys for dashboard UI. Keys are English; add locales as needed. */
+const messages: Record<string, Record<string, string>> = {
+  en: {
+    'nav.brand': '🥟 bao-boss',
+    'nav.dashboard': 'Dashboard',
+    'nav.queues': 'Queues',
+    'nav.schedules': 'Schedules',
+    'nav.stats': 'Stats',
+    'nav.metrics': 'Metrics',
+    'table.name': 'Name',
+    'table.policy': 'Policy',
+    'table.pending': 'Pending',
+    'table.retryLimit': 'Retry Limit',
+    'table.deadLetter': 'Dead Letter',
+    'table.created': 'Created',
+    'table.id': 'ID',
+    'table.state': 'State',
+    'table.priority': 'Priority',
+    'table.actions': 'Actions',
+    'table.setting': 'Setting',
+    'table.value': 'Value',
+    'table.cron': 'Cron',
+    'table.timezone': 'Timezone',
+    'field.queue': 'Queue',
+    'field.retryDelay': 'Retry Delay',
+    'field.retryBackoff': 'Retry Backoff',
+    'field.expireIn': 'Expire In',
+    'field.retentionDays': 'Retention Days',
+    'field.retryCount': 'Retry Count',
+    'field.startAfter': 'Start After',
+    'field.startedOn': 'Started On',
+    'field.completedOn': 'Completed On',
+    'field.keepUntil': 'Keep Until',
+    'field.progress': 'Progress',
+    'empty.noQueues': 'No queues yet',
+    'empty.noQueuesShort': 'No queues',
+    'empty.noSchedules': 'No schedules',
+    'btn.retry': 'Retry',
+    'btn.cancel': 'Cancel',
+    'btn.delete': 'Delete',
+    'msg.queueNotFound': 'Queue not found',
+    'msg.jobNotFound': 'Job not found',
+    'msg.unauthorized': 'Unauthorized',
+    'msg.forbiddenCsrf': 'Forbidden: invalid CSRF token',
+    'msg.tooManyRequests': 'Too Many Requests',
+    'msg.jobQueuedRetry': 'Job queued for retry',
+    'msg.jobCancelled': 'Job cancelled',
+    'stat.created': 'Created',
+    'stat.active': 'Active',
+    'stat.completed': 'Completed',
+    'stat.failed': 'Failed',
+    'stat.cancelled': 'Cancelled',
+    'stat.queues': 'Queues',
+    'stat.totalJobs': 'Total Jobs',
+    'stat.dlq': 'DLQ',
+    'section.queues': 'Queues',
+    'section.schedules': 'Schedules',
+    'section.queueSettings': 'Queue Settings',
+    'section.recentJobs': 'Recent Jobs (last 50)',
+    'section.details': 'Details',
+    'section.data': 'Data',
+    'section.output': 'Output',
+    'aria.queueStats': 'Queue statistics',
+    'aria.dashboardStats': 'Dashboard statistics',
+    'aria.retryJob': 'Retry job',
+    'aria.cancelJob': 'Cancel job',
+    'aria.retryThis': 'Retry this job',
+    'aria.cancelThis': 'Cancel this job',
+    'aria.removeSchedule': 'Remove schedule',
+    'aria.progressPercent': 'percent',
+    'aria.mainNav': 'Main navigation',
+    'aria.dashboardContent': 'Dashboard content',
+    'section.queue': 'Queue',
+    'section.job': 'Job',
+    'empty.none': '—',
+    'confirm.removeSchedule': "Remove schedule '{name}'?",
+    'confirm.retryJob': "Retry job {id}?",
+    'confirm.cancelJob': "Cancel job {id}?",
+    'confirm.retryThis': 'Retry this job?',
+    'confirm.cancelThis': 'Cancel this job?',
+    'msg.jobAlreadyFinished': 'Job already finished',
+    'title.dashboard': 'bao-boss Dashboard',
+    'unit.seconds': 's',
+  },
+}
+
+/** Look up a message by key. Falls back to English if locale not found. */
+export function t(key: string, locale = 'en'): string {
+  const en = messages['en']!
+  const loc = messages[locale] ?? en
+  return loc[key] ?? en[key] ?? key
+}
+
+/** Format a date using the given locale. */
+export function formatDate(date: Date, locale = 'en', options?: Intl.DateTimeFormatOptions): string {
+  return date.toLocaleDateString(locale, options)
+}
+
+/** Format a datetime using the given locale. */
+export function formatDateTime(date: Date, locale = 'en', options?: Intl.DateTimeFormatOptions): string {
+  return date.toLocaleString(locale, options)
+}
