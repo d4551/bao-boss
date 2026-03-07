@@ -7,8 +7,23 @@ interface MaintenanceOptions {
   deleteArchivedAfterDays: number
 }
 
+/**
+ * Minimal 5-field cron parser: "minute hour day-of-month month day-of-week"
+ *
+ * Supported syntax per field:
+ *   *          matches any value
+ *   N          exact value
+ *   N,M,...    comma-separated list of values
+ *   N-M        inclusive range
+ *   *\/N or N\/N  step (e.g. *\/5 = every 5 units)
+ *
+ * Limitations:
+ *   - No @yearly / @monthly / @weekly / @daily / @hourly aliases
+ *   - No L (last), W (weekday), # (nth weekday) modifiers
+ *   - Seconds field not supported (standard 5-field only)
+ *   - Timezone handling is left to the caller
+ */
 function parseCron(cron: string): (date: Date) => boolean {
-  // Simple cron check - returns true if current minute matches the cron expression
   const parts = cron.split(' ')
   if (parts.length !== 5) return () => false
   const [min, hour, dom, month, dow] = parts as [string, string, string, string, string]

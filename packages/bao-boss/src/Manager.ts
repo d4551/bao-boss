@@ -129,8 +129,15 @@ export class Manager {
         })
         if (existing) return existing.id
       }
-      if (policy === 'singleton') {
-        // Queue the job but only one can be active at a time
+      // 'singleton': jobs are queued normally; the SKIP LOCKED fetch ensures only
+      // one is active at a time because the active row is locked until complete/fail.
+      // 'stately': at most one created + one active simultaneously.
+      if (policy === 'stately') {
+        const [hasCreated, hasActive] = await Promise.all([
+          this.prisma.job.findFirst({ where: { queue: name, state: 'created' } }),
+          this.prisma.job.findFirst({ where: { queue: name, state: 'active' } }),
+        ])
+        if (hasCreated && hasActive) return hasCreated.id
       }
     }
 
@@ -195,9 +202,8 @@ export class Manager {
         FOR UPDATE SKIP LOCKED
       )
       UPDATE baoboss.job j
-      SET    state      = 'active',
-             "startedOn" = now(),
-             "retryCount" = CASE WHEN state = 'failed' THEN "retryCount" + 1 ELSE "retryCount" END
+      SET    state       = 'active',
+             "startedOn" = now()
       FROM   next_jobs
       WHERE  j.id = next_jobs.id
       RETURNING j.*;

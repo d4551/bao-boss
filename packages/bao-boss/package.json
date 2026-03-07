@@ -17,7 +17,6 @@
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "@sinclair/typebox": "^0.34.48",
-    "cron-parser": "^4.9.0",
     "elysia": "^1.1.27",
     "zod": "^3.23.8"
   },
