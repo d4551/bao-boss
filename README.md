@@ -103,7 +103,7 @@ sequenceDiagram
 
 ## Requirements
 
-- [Bun](https://bun.sh) >= 1.0
+- [Bun](https://bun.sh) >= 1.1
 - PostgreSQL 15+
 
 ---

@@ -145,5 +145,5 @@ All tables in `baoboss` PostgreSQL schema:
 
 - Repository: https://github.com/d4551/bao-boss
 - License: MIT
-- Runtime: Bun >= 1.0
+- Runtime: Bun >= 1.1
 - Database: PostgreSQL 15+

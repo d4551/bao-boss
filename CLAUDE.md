@@ -10,7 +10,7 @@ bao-boss is a **Bun-native job queue library** built on PostgreSQL, inspired by 
 
 | Layer | Technology | Role |
 |-------|-----------|------|
-| Runtime | Bun >= 1.0 | Native APIs, test runner, package manager |
+| Runtime | Bun >= 1.1 | Native APIs, test runner, package manager |
 | HTTP | Elysia | Dashboard plugin with type-safe routes |
 | ORM | Prisma | Schema, migrations, raw SQL for SKIP LOCKED |
 | Dashboard | htmx | Server-rendered HTML fragments |
