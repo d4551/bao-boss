@@ -1,10 +1,12 @@
 import { PrismaClient, Prisma } from './generated/prisma/client.js'
-import { t } from 'elysia'
+import { Type as t } from '@sinclair/typebox'
 import { Value } from '@sinclair/typebox/value'
 import type { Job, Queue, CreateQueueOptions, SendOptions } from './types.js'
 
+const policySchema = t.Union([t.Literal('standard'), t.Literal('short'), t.Literal('singleton'), t.Literal('stately')])
+
 const createQueueSchema = t.Object({
-  policy: t.Optional(t.UnionEnum(['standard', 'short', 'singleton', 'stately'])),
+  policy: t.Optional(policySchema),
   retryLimit: t.Optional(t.Integer({ minimum: 0 })),
   retryDelay: t.Optional(t.Integer({ minimum: 0 })),
   retryBackoff: t.Optional(t.Boolean()),

@@ -14,7 +14,7 @@ bao-boss — A Bun-native job queue library built on PostgreSQL with SKIP LOCKED
 | HTTP | Elysia | Type-safe routes for dashboard plugin |
 | ORM | Prisma 7 + PrismaPg adapter | Schema, migrations, raw SQL for SKIP LOCKED |
 | UI | htmx | Server-rendered dashboard without JS frameworks |
-| Validation | TypeBox (via Elysia `t`) | Input validation |
+| Validation | TypeBox (`@sinclair/typebox`) | Input validation |
 | Language | TypeScript (strict) | Full type safety |
 | Database | PostgreSQL 15+ | SKIP LOCKED, pgcrypto |
 
@@ -25,7 +25,7 @@ bao-boss — A Bun-native job queue library built on PostgreSQL with SKIP LOCKED
 - ESNext modules with `.js` import extensions
 - All database tables in `baoboss` PostgreSQL schema
 - Prisma 7 for CRUD (import from `src/generated/prisma/`), raw SQL only for SKIP LOCKED fetch
-- Validate inputs with TypeBox (`t` from Elysia, `Value.Decode`) in Manager.ts
+- Validate inputs with TypeBox (`Type` from `@sinclair/typebox`, `Value.Decode`) in Manager.ts
 - Dashboard uses htmx — no React/Vue/Svelte
 - Tests use `bun test` and require PostgreSQL
 

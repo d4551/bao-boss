@@ -33,7 +33,7 @@ bao-boss is a Bun-native PostgreSQL job queue library. It provides background jo
 4. **Prisma 7 for schema** — modify `packages/bao-boss/prisma/schema.prisma` for DB changes, then run `bunx prisma migrate dev`. Uses `prisma-client` generator with output to `src/generated/prisma/` and `@prisma/adapter-pg` driver adapter.
 5. **Raw SQL for SKIP LOCKED** — the `fetch` method uses `prisma.$queryRaw` with `FOR UPDATE SKIP LOCKED`. Keep this pattern.
 6. **Import from generated client** — all source files import `PrismaClient` from `./generated/prisma/client.js`, never from `@prisma/client`.
-7. **TypeBox validation** — validate all user-facing inputs in Manager.ts using Elysia's `t` schemas and `Value.Decode` from `@sinclair/typebox/value`.
+7. **TypeBox validation** — validate all user-facing inputs in Manager.ts using `Type` from `@sinclair/typebox` and `Value.Decode` from `@sinclair/typebox/value`. Do not import from Elysia in core library files.
 8. **No frontend frameworks** — Dashboard uses htmx 2.x with inline HTML strings in Dashboard.ts. Dashboard is a separate entrypoint (`bao-boss/dashboard`).
 9. **Error handling** — emit errors via `boss.emit('error', err)`, never swallow them.
 10. **Tests** — add tests in `packages/bao-boss/test/` using `bun test`. Tests require a running PostgreSQL instance.
