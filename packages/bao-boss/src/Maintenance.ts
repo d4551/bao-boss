@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient } from './generated/prisma/client.js'
 import type { BaoBoss } from './BaoBoss.js'
 
 interface MaintenanceOptions {

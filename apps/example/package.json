@@ -6,7 +6,11 @@
     "dev": "bun run --watch src/index.ts"
   },
   "dependencies": {
+    "@prisma/client": "^7.4.2",
     "bao-boss": "workspace:*",
-    "elysia": "^1.1.27"
+    "elysia": "^1.4.27"
+  },
+  "devDependencies": {
+    "prisma": "^7.4.2"
   }
 }

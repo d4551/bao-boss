@@ -10,13 +10,13 @@ bao-boss is a **Bun-native job queue library** built on PostgreSQL, inspired by 
 
 | Layer | Technology | Role |
 |-------|-----------|------|
-| Runtime | Bun >= 1.0 | Native APIs, test runner, package manager |
+| Runtime | Bun >= 1.1 | Native APIs, test runner, package manager |
 | HTTP | Elysia | Dashboard plugin with type-safe routes |
-| ORM | Prisma | Schema, migrations, raw SQL for SKIP LOCKED |
+| ORM | Prisma 7 + PrismaPg adapter | Schema, migrations, raw SQL for SKIP LOCKED |
 | Dashboard | htmx | Server-rendered HTML fragments |
 | Language | TypeScript (strict) | Full type safety with generics |
 | Database | PostgreSQL 15+ | SKIP LOCKED, pgcrypto, baoboss schema |
-| Validation | Zod | Runtime input validation |
+| Validation | TypeBox (`@sinclair/typebox`) | Runtime input validation |
 
 ## Repository Structure
 
@@ -39,7 +39,7 @@ bao-boss/
 │   ├── sql/                  # Raw SKIP LOCKED query files
 │   └── test/                 # Bun test suite
 ├── apps/example/             # Example Elysia app with dashboard
-├── docker-compose.yaml       # PostgreSQL 15 for local dev
+├── docker-compose.yaml       # PostgreSQL 17 for local dev
 └── package.json              # Bun workspace root
 ```
 
@@ -56,10 +56,12 @@ bao-boss/
 ## Key Architecture Decisions
 
 1. **SKIP LOCKED** for concurrent job fetching — raw SQL via `prisma.$queryRaw`, not Prisma ORM queries.
-2. **EventEmitter** pattern — `BaoBoss` extends Node's `EventEmitter` for error/wip/stopped events.
-3. **Queue policies** — `standard`, `short`, `singleton`, `stately` control concurrency at the queue level.
-4. **Maintenance loop** — background supervisor handles expiry, archival, purge, and cron firing.
-5. **Graceful shutdown** — workers drain in-flight handlers before stopping.
+2. **Prisma 7 + PrismaPg adapter** — uses `@prisma/adapter-pg` driver adapter with generated client from `src/generated/prisma/`.
+3. **EventEmitter** pattern — `BaoBoss` extends Node's `EventEmitter` for error/wip/stopped events.
+4. **Queue policies** — `standard`, `short`, `singleton`, `stately` control concurrency at the queue level.
+5. **Maintenance loop** — background supervisor handles expiry, archival, purge, and cron firing.
+6. **Graceful shutdown** — workers drain in-flight handlers before stopping.
+7. **Separate dashboard entrypoint** — `bao-boss/dashboard` keeps Elysia as an optional peer dependency.
 
 ## Common Commands
 
@@ -74,7 +76,7 @@ cd apps/example && bun run dev          # Run example app
 
 ## Public API Surface
 
-The main export is `BaoBoss` class and `baoBossDashboard` Elysia plugin:
+The main entrypoint (`bao-boss`) exports `BaoBoss` class and types. The dashboard is a separate entrypoint (`bao-boss/dashboard`) to keep Elysia optional:
 
 - **Queue management**: `createQueue`, `updateQueue`, `deleteQueue`, `purgeQueue`, `getQueue`, `getQueues`
 - **Job operations**: `send`, `insert`, `fetch`, `complete`, `fail`, `cancel`, `resume`, `getJobById`
@@ -88,7 +90,7 @@ The main export is `BaoBoss` class and `baoBossDashboard` Elysia plugin:
 When modifying this codebase:
 
 - Use Prisma for standard CRUD, raw SQL only for SKIP LOCKED operations.
-- Validate inputs with Zod schemas in Manager.ts.
+- Validate inputs with TypeBox schemas (`Type` from `@sinclair/typebox`, `Value.Decode` from `@sinclair/typebox/value`) in Manager.ts.
 - Return `Job<T>` generic types from all job-returning methods.
 - Emit errors via `boss.emit('error', err)` — never swallow errors silently.
 - Use `Bun.sleep` or `setTimeout` for delays, not busy-waiting.

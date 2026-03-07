@@ -1,4 +1,5 @@
-import { BaoBoss, baoBossDashboard } from 'bao-boss'
+import { BaoBoss } from 'bao-boss'
+import { baoBossDashboard } from 'bao-boss/dashboard'
 import { Elysia } from 'elysia'
 
 interface EmailPayload { to: string; subject: string; body: string }

@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events'
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient } from './generated/prisma/client.js'
+import { PrismaPg } from '@prisma/adapter-pg'
 import type { BaoBossOptions, CreateQueueOptions, SendOptions, WorkOptions, Job, Queue, Schedule } from './types.js'
 import { Manager } from './Manager.js'
 import { Worker } from './Worker.js'
@@ -31,9 +32,8 @@ export class BaoBoss extends EventEmitter {
     if (options.prisma) {
       this.prisma = options.prisma as PrismaClient
     } else {
-      this.prisma = new PrismaClient({
-        datasourceUrl: this.opts.connectionString,
-      })
+      const adapter = new PrismaPg({ connectionString: this.opts.connectionString })
+      this.prisma = new PrismaClient({ adapter })
     }
 
     this.manager = new Manager(this.prisma)
@@ -43,7 +43,6 @@ export class BaoBoss extends EventEmitter {
   async start(): Promise<void> {
     if (this.started) return
     await this.prisma.$connect()
-    // Ensure schema exists
     await this.prisma.$executeRawUnsafe(`CREATE SCHEMA IF NOT EXISTS baoboss`)
     this.started = true
 
@@ -61,12 +60,10 @@ export class BaoBoss extends EventEmitter {
     if (!this.started || this.stopping) return
     this.stopping = true
 
-    // Stop maintenance
     if (this.maintenance) {
       this.maintenance.stop()
     }
 
-    // Stop all workers gracefully
     const gracePeriodMs = this.opts.shutdownGracePeriodSeconds * 1000
     const stopPromises = Array.from(this.workers.values()).map(w => w.stop(gracePeriodMs))
     await Promise.all(stopPromises)
@@ -167,14 +164,12 @@ export class BaoBoss extends EventEmitter {
   }
 
   async offWork(queueOrId: string): Promise<void> {
-    // Try by ID first
     const byId = this.workers.get(queueOrId)
     if (byId) {
       await byId.stop()
       this.workers.delete(queueOrId)
       return
     }
-    // Stop all workers for a queue
     const toStop: string[] = []
     for (const [id, worker] of this.workers) {
       if (worker.queue === queueOrId) {
