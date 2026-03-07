@@ -19,7 +19,7 @@ Basic usage:
 ```typescript
 import { BaoBoss } from 'bao-boss'
 
-const boss = new BaoBoss({ connectionString: process.env.DATABASE_URL })
+const boss = new BaoBoss({ connectionString: process.env['DATABASE_URL'] })
 await boss.start()
 
 await boss.createQueue('emails', { retryLimit: 3, retryBackoff: true })

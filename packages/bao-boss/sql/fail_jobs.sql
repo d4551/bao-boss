@@ -1,17 +1,17 @@
 UPDATE baoboss.job
-SET    state       = CASE
-                      WHEN retry_count < retry_limit THEN 'created'
-                      ELSE 'failed'
-                    END,
-       retry_count  = retry_count + 1,
-       start_after  = CASE
-                       WHEN retry_count < retry_limit AND retry_backoff
-                         THEN now() + (retry_delay * power(2, retry_count) || ' seconds')::interval
-                       WHEN retry_count < retry_limit
-                         THEN now() + (retry_delay || ' seconds')::interval
-                       ELSE start_after
+SET    state        = CASE
+                       WHEN "retryCount" < "retryLimit" THEN 'created'
+                       ELSE 'failed'
                      END,
-       output       = $2::jsonb
-WHERE  id = $1
+       "retryCount"  = "retryCount" + 1,
+       "startAfter"  = CASE
+                        WHEN "retryCount" < "retryLimit" AND "retryBackoff"
+                          THEN now() + ("retryDelay" * power(2, "retryCount") || ' seconds')::interval
+                        WHEN "retryCount" < "retryLimit"
+                          THEN now() + ("retryDelay" || ' seconds')::interval
+                        ELSE "startAfter"
+                      END,
+       output        = $2::jsonb
+WHERE  id = $1::uuid
   AND  state = 'active'
 RETURNING *;

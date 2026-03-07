@@ -1,7 +1,7 @@
 UPDATE baoboss.job
-SET    state        = 'completed',
-       completed_on = now(),
-       output       = $2::jsonb
-WHERE  id = $1
+SET    state         = 'completed',
+       "completedOn" = now(),
+       output        = $2::jsonb
+WHERE  id = $1::uuid
   AND  state = 'active'
 RETURNING *;

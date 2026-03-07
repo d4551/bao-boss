@@ -136,7 +136,7 @@ bunx prisma migrate deploy
 ```typescript
 import { BaoBoss } from 'bao-boss'
 
-const boss = new BaoBoss({ connectionString: process.env.DATABASE_URL })
+const boss = new BaoBoss({ connectionString: process.env['DATABASE_URL'] })
 await boss.start()
 
 // Create a queue
