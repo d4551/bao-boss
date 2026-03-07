@@ -133,11 +133,10 @@ export class Manager {
       // one is active at a time because the active row is locked until complete/fail.
       // 'stately': at most one created + one active simultaneously.
       if (policy === 'stately') {
-        const [hasCreated, hasActive] = await Promise.all([
-          this.prisma.job.findFirst({ where: { queue: name, state: 'created' } }),
-          this.prisma.job.findFirst({ where: { queue: name, state: 'active' } }),
-        ])
-        if (hasCreated && hasActive) return hasCreated.id
+        const hasCreated = await this.prisma.job.findFirst({
+          where: { queue: name, state: 'created' },
+        })
+        if (hasCreated) return hasCreated.id
       }
     }
 
@@ -190,6 +189,20 @@ export class Manager {
 
   async fetch<T = unknown>(queue: string, options: { batchSize?: number } = {}): Promise<Job<T>[]> {
     const batchSize = options.batchSize ?? 1
+
+    // For singleton/stately policies, enforce at most one active job at a time
+    const queueRow = await this.prisma.queue.findUnique({ where: { name: queue } })
+    if (queueRow && (queueRow.policy === 'singleton' || queueRow.policy === 'stately')) {
+      const activeCount = await this.prisma.job.count({
+        where: { queue, state: 'active' },
+      })
+      if (activeCount > 0) return []
+    }
+
+    const effectiveBatch = queueRow && (queueRow.policy === 'singleton' || queueRow.policy === 'stately')
+      ? 1
+      : batchSize
+
     const rows = await this.prisma.$queryRaw<Array<Record<string, unknown>>>`
       WITH next_jobs AS (
         SELECT id
@@ -198,7 +211,7 @@ export class Manager {
           AND state       = 'created'
           AND "startAfter" <= now()
         ORDER BY priority DESC, "createdOn" ASC
-        LIMIT ${batchSize}
+        LIMIT ${effectiveBatch}
         FOR UPDATE SKIP LOCKED
       )
       UPDATE baoboss.job j

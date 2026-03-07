@@ -8,11 +8,25 @@ const boss = new BaoBoss({ connectionString: process.env['DATABASE_URL'] ?? '' }
 async function main() {
   switch (command) {
     case 'migrate': {
-      console.log('Run: bunx prisma migrate deploy')
+      const proc = Bun.spawn(['bunx', 'prisma', 'migrate', 'deploy'], {
+        cwd: import.meta.dir + '/..',
+        stdout: 'inherit',
+        stderr: 'inherit',
+        env: process.env,
+      })
+      const exitCode = await proc.exited
+      if (exitCode !== 0) process.exit(exitCode)
       break
     }
     case 'migrate:reset': {
-      console.log('Run: bunx prisma migrate reset')
+      const proc = Bun.spawn(['bunx', 'prisma', 'migrate', 'reset', '--force'], {
+        cwd: import.meta.dir + '/..',
+        stdout: 'inherit',
+        stderr: 'inherit',
+        env: process.env,
+      })
+      const exitCode = await proc.exited
+      if (exitCode !== 0) process.exit(exitCode)
       break
     }
     case 'queues': {

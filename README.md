@@ -126,7 +126,7 @@ await boss.createQueue('emails', {
 | `standard` | Default — multiple jobs can be created and active |
 | `short` | At most one pending job; new sends return the existing job ID |
 | `singleton` | Only one job active at a time |
-| `stately` | Only one job per state transition |
+| `stately` | At most one created + one active job simultaneously |
 
 #### `boss.updateQueue(name, options)`
 
@@ -377,6 +377,12 @@ Access the dashboard at `http://localhost:3000/boss`.
 ### CLI
 
 ```bash
+# Run pending Prisma migrations
+bao migrate
+
+# Drop & recreate the baoboss schema
+bao migrate:reset
+
 # List queues and job counts
 bao queues
 
@@ -401,6 +407,7 @@ bao schedule:rm daily-digest
 
 ```typescript
 boss.on('error', (err) => console.error('BaoBoss error:', err))
+boss.on('wip', (data) => console.log('Jobs in flight:', data))
 boss.on('stopped', () => console.log('BaoBoss stopped'))
 ```
 
