@@ -4,3 +4,6 @@ dist/
 .env
 .env.*
 !.env.example
+
+# Prisma v7 generated client
+packages/bao-boss/src/generated/

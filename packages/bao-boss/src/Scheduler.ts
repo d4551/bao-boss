@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient } from './generated/prisma/client.js'
 import type { Schedule } from './types.js'
 
 export class Scheduler {

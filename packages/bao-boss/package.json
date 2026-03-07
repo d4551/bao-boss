@@ -1,27 +1,77 @@
 {
   "name": "bao-boss",
   "version": "0.1.0",
+  "description": "Bun-native PostgreSQL job queue with SKIP LOCKED, retries, cron scheduling, pub/sub, dead letter queues, and an HTMX dashboard",
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./dashboard": "./src/Dashboard.ts"
+  },
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "bin": {
     "bao": "./src/cli.ts"
   },
+  "files": [
+    "src",
+    "prisma",
+    "sql",
+    "LICENSE"
+  ],
+  "engines": {
+    "bun": ">=1.1"
+  },
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "build": "bun build src/index.ts --outdir dist --target bun",
     "test": "bun test",
-    "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate deploy"
+    "postinstall": "prisma generate",
+    "db:generate": "bunx prisma generate",
+    "db:migrate": "bunx prisma migrate deploy"
   },
   "dependencies": {
-    "@prisma/client": "^7.4.2",
-    "@sinclair/typebox": "^0.34.48",
-    "elysia": "^1.4.27"
+    "@prisma/adapter-pg": "^7.4.2",
+    "@sinclair/typebox": "^0.34.48"
+  },
+  "peerDependencies": {
+    "@prisma/client": "^7.0.0",
+    "elysia": ">=1.0.0",
+    "prisma": "^7.0.0"
+  },
+  "peerDependenciesMeta": {
+    "elysia": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@prisma/client": "^7.4.2",
     "bun-types": "latest",
+    "elysia": "^1.4.27",
     "prisma": "^7.4.2",
     "typescript": "^5.9.3"
-  }
+  },
+  "keywords": [
+    "bun",
+    "job-queue",
+    "postgresql",
+    "skip-locked",
+    "background-jobs",
+    "task-queue",
+    "cron",
+    "scheduler",
+    "pubsub",
+    "dead-letter-queue",
+    "elysia",
+    "htmx",
+    "prisma",
+    "worker"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/d4551/bao-boss.git",
+    "directory": "packages/bao-boss"
+  },
+  "homepage": "https://github.com/d4551/bao-boss#readme",
+  "bugs": "https://github.com/d4551/bao-boss/issues"
 }

@@ -1,4 +1,4 @@
-import { PrismaClient, Prisma } from '@prisma/client'
+import { PrismaClient, Prisma } from './generated/prisma/client.js'
 import { t } from 'elysia'
 import { Value } from '@sinclair/typebox/value'
 import type { Job, Queue, CreateQueueOptions, SendOptions } from './types.js'

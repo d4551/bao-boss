@@ -158,7 +158,13 @@ await boss.work('emails', async ([job]) => {
 ## Installation
 
 ```bash
-bun add bao-boss
+bun add bao-boss @prisma/client prisma
+```
+
+Elysia is only needed if you use the HTMX dashboard:
+
+```bash
+bun add elysia  # optional — only for dashboard
 ```
 
 ---
@@ -399,7 +405,8 @@ Mount the HTMX dashboard as an Elysia plugin:
 
 ```typescript
 import { Elysia } from 'elysia'
-import { BaoBoss, baoBossDashboard } from 'bao-boss'
+import { BaoBoss } from 'bao-boss'
+import { baoBossDashboard } from 'bao-boss/dashboard'
 
 const boss = new BaoBoss()
 await boss.start()
@@ -519,7 +526,7 @@ bao-boss/
 │           └── dashboard.test.ts
 ├── apps/
 │   └── example/                # Example Elysia app with dashboard
-├── docker-compose.yaml         # PostgreSQL 15 for local dev
+├── docker-compose.yaml         # PostgreSQL 17 for local dev
 └── package.json                # Bun workspace root
 ```
 

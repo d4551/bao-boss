@@ -34,7 +34,7 @@ await boss.work('emails', async ([job]) => {
 
 - Runtime: Bun (native APIs, test runner)
 - HTTP: Elysia (dashboard plugin)
-- ORM: Prisma (schema, migrations) + raw SQL (SKIP LOCKED)
+- ORM: Prisma 7 + PrismaPg adapter (schema, migrations) + raw SQL (SKIP LOCKED)
 - Dashboard: htmx (server-rendered HTML)
 - Language: TypeScript (strict mode)
 - Database: PostgreSQL 15+ (SKIP LOCKED, pgcrypto)

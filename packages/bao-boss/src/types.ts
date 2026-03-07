@@ -1,5 +1,3 @@
-import type { Prisma } from '@prisma/client'
-
 export type JobState = 'created' | 'active' | 'completed' | 'cancelled' | 'failed'
 export type QueuePolicy = 'standard' | 'short' | 'singleton' | 'stately'
 

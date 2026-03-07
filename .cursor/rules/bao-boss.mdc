@@ -13,7 +13,7 @@ Bun-native PostgreSQL job queue library with SKIP LOCKED concurrency, retries, c
 
 - Runtime: Bun (not Node.js)
 - HTTP: Elysia (type-safe routes)
-- ORM: Prisma (schema + migrations) + raw SQL for SKIP LOCKED
+- ORM: Prisma 7 + PrismaPg adapter (schema + migrations) + raw SQL for SKIP LOCKED
 - Dashboard: htmx (server-rendered HTML, no JS frameworks)
 - Validation: TypeBox (via Elysia `t`)
 - Language: TypeScript strict mode
@@ -25,7 +25,7 @@ Bun-native PostgreSQL job queue library with SKIP LOCKED concurrency, retries, c
 - ESNext modules with `.js` import extensions
 - TypeScript strict with `noUncheckedIndexedAccess`
 - All DB tables in `baoboss` PostgreSQL schema
-- Prisma for CRUD, raw SQL only for `FOR UPDATE SKIP LOCKED`
+- Prisma 7 for CRUD (import from `src/generated/prisma/`), raw SQL only for `FOR UPDATE SKIP LOCKED`
 - Validate inputs with TypeBox schemas (`t` + `Value.Decode`) in Manager.ts
 - Dashboard: inline HTML strings with htmx attributes
 - Emit errors via `boss.emit('error', err)` — never swallow
