@@ -1,0 +1,95 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions", "multiSchema"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgcrypto]
+  schemas    = ["baoboss"]
+}
+
+model Job {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  queue         String
+  priority      Int       @default(0)
+  data          Json?
+  state         JobState  @default(created)
+  retryLimit    Int       @default(2)
+  retryCount    Int       @default(0)
+  retryDelay    Int       @default(0)
+  retryBackoff  Boolean   @default(false)
+  startAfter    DateTime  @default(now()) @db.Timestamptz
+  startedOn     DateTime? @db.Timestamptz
+  expireIn      Int       @default(900)
+  createdOn     DateTime  @default(now()) @db.Timestamptz
+  completedOn   DateTime? @db.Timestamptz
+  keepUntil     DateTime  @default(dbgenerated("now() + interval '14 days'")) @db.Timestamptz
+  singletonKey  String?
+  output        Json?
+  deadLetter    String?
+  policy        String?
+
+  @@index([queue, state, startAfter, priority(sort: Desc)])
+  @@map("job")
+  @@schema("baoboss")
+}
+
+model Queue {
+  name          String   @id
+  policy        Policy   @default(standard)
+  retryLimit    Int      @default(2)
+  retryDelay    Int      @default(0)
+  retryBackoff  Boolean  @default(false)
+  expireIn      Int      @default(900)
+  retentionDays Int      @default(14)
+  deadLetter    String?
+  createdOn     DateTime @default(now()) @db.Timestamptz
+  updatedOn     DateTime @updatedAt @db.Timestamptz
+
+  @@map("queue")
+  @@schema("baoboss")
+}
+
+model Schedule {
+  name        String   @id
+  cron        String
+  timezone    String   @default("UTC")
+  data        Json?
+  options     Json?
+  createdOn   DateTime @default(now()) @db.Timestamptz
+  updatedOn   DateTime @updatedAt @db.Timestamptz
+
+  @@map("schedule")
+  @@schema("baoboss")
+}
+
+model Subscription {
+  event     String
+  queue     String
+  createdOn DateTime @default(now()) @db.Timestamptz
+
+  @@id([event, queue])
+  @@map("subscription")
+  @@schema("baoboss")
+}
+
+enum JobState {
+  created
+  active
+  completed
+  cancelled
+  failed
+
+  @@schema("baoboss")
+}
+
+enum Policy {
+  standard
+  short
+  singleton
+  stately
+
+  @@schema("baoboss")
+}

@@ -1,0 +1,29 @@
+{
+  "name": "bao-boss",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "bin": {
+    "bao": "./src/cli.ts"
+  },
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "test": "bun test",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "@sinclair/typebox": "^0.34.48",
+    "cron-parser": "^4.9.0",
+    "elysia": "^1.1.27",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "bun-types": "latest",
+    "prisma": "^5.22.0",
+    "typescript": "^5.6.3"
+  }
+}

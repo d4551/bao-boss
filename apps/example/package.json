@@ -1,0 +1,12 @@
+{
+  "name": "bao-boss-example",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts"
+  },
+  "dependencies": {
+    "bao-boss": "workspace:*",
+    "elysia": "^1.1.27"
+  }
+}
