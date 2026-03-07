@@ -1,0 +1,149 @@
+# bao-boss
+
+> Bun-native job queue library built on PostgreSQL — reliable background job processing with SKIP LOCKED concurrency, automatic retries, cron scheduling, pub/sub fan-out, dead letter queues, and an HTMX dashboard.
+
+## Overview
+
+bao-boss is a PostgreSQL-backed job queue designed for the Bun runtime. It uses `SELECT ... FOR UPDATE SKIP LOCKED` for reliable concurrent job fetching, supports configurable retry policies with exponential backoff, cron-based scheduling, event-driven pub/sub, dead letter queues, and includes a built-in HTMX dashboard as an Elysia plugin.
+
+## Quick Start
+
+Install with Bun:
+
+```bash
+bun add bao-boss
+```
+
+Basic usage:
+
+```typescript
+import { BaoBoss } from 'bao-boss'
+
+const boss = new BaoBoss({ connectionString: process.env.DATABASE_URL })
+await boss.start()
+
+await boss.createQueue('emails', { retryLimit: 3, retryBackoff: true })
+const id = await boss.send('emails', { to: 'user@example.com', subject: 'Hello' })
+
+await boss.work('emails', async ([job]) => {
+  console.log('Sending email to:', job.data.to)
+})
+```
+
+## Stack
+
+- Runtime: Bun (native APIs, test runner)
+- HTTP: Elysia (dashboard plugin)
+- ORM: Prisma (schema, migrations) + raw SQL (SKIP LOCKED)
+- Dashboard: htmx (server-rendered HTML)
+- Language: TypeScript (strict mode)
+- Database: PostgreSQL 15+ (SKIP LOCKED, pgcrypto)
+
+## Core Concepts
+
+### Job States
+created -> active -> completed | failed
+failed -> created (retry) | DLQ (exhausted)
+created | active -> cancelled
+cancelled | failed -> created (resume)
+
+### Queue Policies
+- standard: Default FIFO, multiple jobs allowed
+- short: At most one created job at a time
+- singleton: At most one active job at a time
+- stately: At most one created + one active simultaneously
+
+### SKIP LOCKED
+Jobs are fetched using PostgreSQL `SELECT ... FOR UPDATE SKIP LOCKED`, ensuring multiple workers can safely poll the same queue without conflicts.
+
+## API
+
+### Lifecycle
+- `new BaoBoss(options?)` — Create instance
+- `boss.start()` — Connect and start maintenance
+- `boss.stop()` — Graceful shutdown
+
+### Queue Management
+- `boss.createQueue(name, options?)` — Create a queue
+- `boss.updateQueue(name, options)` — Update queue settings
+- `boss.deleteQueue(name)` — Delete queue and all jobs
+- `boss.purgeQueue(name)` — Delete pending jobs
+- `boss.getQueue(name)` — Get queue config
+- `boss.getQueues()` — List all queues
+- `boss.getQueueSize(name, options?)` — Count pending/active jobs
+
+### Job Operations
+- `boss.send(queue, data?, options?)` — Send a job (returns UUID)
+- `boss.insert(jobs)` — Batch insert jobs
+- `boss.fetch(queue, options?)` — Manually fetch and lock jobs
+- `boss.complete(id, options?)` — Mark job completed
+- `boss.fail(id, error?)` — Mark job failed (with retry logic)
+- `boss.cancel(id)` — Cancel a job
+- `boss.resume(id)` — Re-enqueue cancelled/failed job
+- `boss.getJobById(id)` — Get job by UUID
+- `boss.getJobsById(ids)` — Get multiple jobs
+
+### Workers
+- `boss.work(queue, options?, handler)` — Start polling worker
+- `boss.offWork(queueOrId)` — Stop worker(s)
+
+### Scheduling
+- `boss.schedule(name, cron, data?, options?)` — Create cron schedule
+- `boss.unschedule(name)` — Remove schedule
+- `boss.getSchedules()` — List schedules
+
+### Pub/Sub
+- `boss.publish(event, data?, options?)` — Fan-out to subscribed queues
+- `boss.subscribe(event, queue)` — Subscribe queue to event
+- `boss.unsubscribe(event, queue)` — Unsubscribe
+
+### Dashboard
+- `baoBossDashboard(boss, options?)` — Elysia plugin for HTMX dashboard
+
+## Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| connectionString | string | DATABASE_URL env | PostgreSQL connection |
+| prisma | PrismaClient | auto | Bring your own Prisma client |
+| maintenanceIntervalSeconds | number | 120 | Maintenance loop interval |
+| archiveCompletedAfterSeconds | number | 43200 | Archive completed jobs after |
+| deleteArchivedAfterDays | number | 7 | Delete archived jobs after |
+| noSupervisor | boolean | false | Disable maintenance |
+| shutdownGracePeriodSeconds | number | 30 | Worker drain timeout |
+
+## Send Options
+
+| Option | Type | Description |
+|--------|------|-------------|
+| priority | number | Higher = processed first (default: 0) |
+| startAfter | number/string/Date | Delay before job is eligible |
+| retryLimit | number | Max retry attempts |
+| retryDelay | number | Seconds between retries |
+| retryBackoff | boolean | Exponential backoff |
+| expireIn | number | Seconds before active job expires |
+| singletonKey | string | Deduplication key |
+| deadLetter | string | Dead letter queue name |
+
+## Database Schema
+
+All tables in `baoboss` PostgreSQL schema:
+- `baoboss.job` — Jobs with state, retry info, payload
+- `baoboss.queue` — Queue config and policies
+- `baoboss.schedule` — Cron schedules
+- `baoboss.subscription` — Pub/sub mappings
+
+## Events
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| error | Error | Unhandled errors |
+| wip | { count } | In-flight job heartbeat |
+| stopped | — | Instance stopped |
+
+## Source
+
+- Repository: https://github.com/d4551/bao-boss
+- License: MIT
+- Runtime: Bun >= 1.0
+- Database: PostgreSQL 15+

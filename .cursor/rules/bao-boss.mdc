@@ -1,0 +1,43 @@
+---
+description: bao-boss development conventions
+globs: ["**/*.ts", "**/*.prisma", "**/*.sql"]
+---
+
+# bao-boss — Cursor Rules
+
+## Project
+
+Bun-native PostgreSQL job queue library with SKIP LOCKED concurrency, retries, cron scheduling, pub/sub, dead letter queues, and an HTMX dashboard.
+
+## Stack
+
+- Runtime: Bun (not Node.js)
+- HTTP: Elysia (type-safe routes)
+- ORM: Prisma (schema + migrations) + raw SQL for SKIP LOCKED
+- Dashboard: htmx (server-rendered HTML, no JS frameworks)
+- Validation: Zod
+- Language: TypeScript strict mode
+- Database: PostgreSQL 15+ with `baoboss` schema
+
+## Conventions
+
+- Use Bun APIs: `bun test`, `bun run`, `bunx prisma`
+- ESNext modules with `.js` import extensions
+- TypeScript strict with `noUncheckedIndexedAccess`
+- All DB tables in `baoboss` PostgreSQL schema
+- Prisma for CRUD, raw SQL only for `FOR UPDATE SKIP LOCKED`
+- Validate inputs with Zod schemas in Manager.ts
+- Dashboard: inline HTML strings with htmx attributes
+- Emit errors via `boss.emit('error', err)` — never swallow
+- Tests in `packages/bao-boss/test/` using `bun test`
+
+## Key Files
+
+- `packages/bao-boss/src/BaoBoss.ts` — Main class, lifecycle
+- `packages/bao-boss/src/Manager.ts` — Job/queue CRUD, SKIP LOCKED
+- `packages/bao-boss/src/Worker.ts` — Polling worker
+- `packages/bao-boss/src/Scheduler.ts` — Cron schedules
+- `packages/bao-boss/src/Maintenance.ts` — Background supervisor
+- `packages/bao-boss/src/Dashboard.ts` — Elysia htmx plugin
+- `packages/bao-boss/src/types.ts` — TypeScript types
+- `packages/bao-boss/prisma/schema.prisma` — DB schema

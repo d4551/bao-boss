@@ -1,0 +1,35 @@
+# bao-boss — Windsurf Rules
+
+## Project
+Bun-native PostgreSQL job queue library with SKIP LOCKED, retries, cron, pub/sub, DLQ, and HTMX dashboard.
+
+## Stack
+- Runtime: Bun (not Node.js)
+- HTTP: Elysia
+- ORM: Prisma + raw SQL for SKIP LOCKED
+- Dashboard: htmx (no JS frameworks)
+- Validation: Zod
+- Language: TypeScript strict
+- Database: PostgreSQL 15+, `baoboss` schema
+
+## Rules
+- Use Bun APIs exclusively
+- TypeScript strict with `noUncheckedIndexedAccess`
+- ESNext modules, `.js` import extensions
+- Prisma for CRUD, raw SQL only for `FOR UPDATE SKIP LOCKED`
+- Validate inputs with Zod in Manager.ts
+- Inline HTML with htmx attributes for dashboard
+- Emit errors via `boss.emit('error', err)`
+- Tests: `bun test` in `packages/bao-boss/test/`
+
+## Key Files
+- `packages/bao-boss/src/BaoBoss.ts` — Main class
+- `packages/bao-boss/src/Manager.ts` — Job/queue CRUD
+- `packages/bao-boss/src/Worker.ts` — Polling worker
+- `packages/bao-boss/src/Dashboard.ts` — htmx dashboard
+- `packages/bao-boss/src/types.ts` — TypeScript types
+- `packages/bao-boss/prisma/schema.prisma` — DB schema
+
+## Documentation
+- See `README.md` for full API reference
+- See `CLAUDE.md` for detailed architecture context
