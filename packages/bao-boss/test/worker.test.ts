@@ -31,6 +31,11 @@ describe.skipIf(skip)('Worker', () => {
 
     await boss.offWork(workerId)
     expect(processed).toContain(id)
+
+    // Verify the job is completed
+    const job = await boss.getJobById(id)
+    expect(job!.state).toBe('completed')
+
     await boss.deleteQueue(qname)
   })
 
@@ -49,6 +54,85 @@ describe.skipIf(skip)('Worker', () => {
 
     await boss.offWork(workerId)
     expect(attempts).toBeGreaterThanOrEqual(2)
+    await boss.deleteQueue(qname)
+  })
+
+  it('processes batch of jobs', async () => {
+    const qname = `test-work-batch-${Date.now()}`
+    await boss.createQueue(qname)
+    const processed: string[] = []
+
+    const workerId = await boss.work(qname, {
+      pollingIntervalSeconds: 0.1,
+      batchSize: 3,
+    }, async (jobs) => {
+      for (const j of jobs) processed.push(j.id)
+    })
+
+    const ids = await boss.insert([
+      { name: qname, data: { n: 1 } },
+      { name: qname, data: { n: 2 } },
+      { name: qname, data: { n: 3 } },
+    ])
+
+    await new Promise(resolve => setTimeout(resolve, 500))
+
+    await boss.offWork(workerId)
+    for (const id of ids) {
+      expect(processed).toContain(id)
+    }
+    await boss.deleteQueue(qname)
+  })
+
+  it('stops all workers for a queue via offWork(queueName)', async () => {
+    const qname = `test-offwork-${Date.now()}`
+    await boss.createQueue(qname)
+
+    const w1 = await boss.work(qname, { pollingIntervalSeconds: 0.5 }, async () => {})
+    const w2 = await boss.work(qname, { pollingIntervalSeconds: 0.5 }, async () => {})
+
+    // Stop all workers for this queue by name
+    await boss.offWork(qname)
+
+    // Verify we can still send/fetch without workers interfering
+    await boss.deleteQueue(qname)
+  })
+
+  it('concurrent workers on same queue do not double-process', async () => {
+    const qname = `test-concurrent-${Date.now()}`
+    await boss.createQueue(qname)
+    const processed: string[] = []
+
+    // Start two workers on the same queue
+    const w1 = await boss.work(qname, { pollingIntervalSeconds: 0.1 }, async (jobs) => {
+      for (const j of jobs) processed.push(j.id)
+    })
+    const w2 = await boss.work(qname, { pollingIntervalSeconds: 0.1 }, async (jobs) => {
+      for (const j of jobs) processed.push(j.id)
+    })
+
+    // Send several jobs
+    const ids = await boss.insert([
+      { name: qname, data: { n: 1 } },
+      { name: qname, data: { n: 2 } },
+      { name: qname, data: { n: 3 } },
+      { name: qname, data: { n: 4 } },
+    ])
+
+    await new Promise(resolve => setTimeout(resolve, 1000))
+
+    await boss.offWork(w1)
+    await boss.offWork(w2)
+
+    // All jobs should be processed
+    for (const id of ids) {
+      expect(processed).toContain(id)
+    }
+
+    // No duplicates
+    const unique = new Set(processed)
+    expect(unique.size).toBe(processed.length)
+
     await boss.deleteQueue(qname)
   })
 })

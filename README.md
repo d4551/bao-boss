@@ -1,6 +1,6 @@
-# 🥟 bao-boss
+# bao-boss
 
-A Bun-native job queue library built on PostgreSQL — inspired by pg-boss, designed for the Bun runtime.
+A Bun-native job queue library built on PostgreSQL — inspired by [pg-boss](https://github.com/timgit/pg-boss), designed for the Bun runtime.
 
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript)](https://www.typescriptlang.org)
@@ -8,20 +8,105 @@ A Bun-native job queue library built on PostgreSQL — inspired by pg-boss, desi
 
 ## Features
 
-- 🚀 **Bun-native** — built for the Bun runtime with Bun's native APIs
-- 🔒 **SKIP LOCKED** — reliable concurrent job fetching with PostgreSQL advisory locks
-- 🔄 **Automatic retries** — configurable retry limits, delays, and exponential backoff
-- ⏰ **Cron scheduling** — built-in cron job scheduler
-- 📨 **Pub/Sub** — event-based fan-out to multiple queues
-- 💀 **Dead letter queues** — automatic routing of failed jobs
-- 🎛️ **HTMX dashboard** — real-time web UI for monitoring and managing jobs
-- 🛠️ **CLI** — command-line tools for queue management
-- 📐 **TypeScript strict** — full type safety throughout
+- **Bun-native** — built for the Bun runtime with Bun's native APIs
+- **SKIP LOCKED** — reliable concurrent job fetching with PostgreSQL `SELECT … FOR UPDATE SKIP LOCKED`
+- **Automatic retries** — configurable retry limits, delays, and exponential backoff
+- **Cron scheduling** — built-in cron job scheduler with timezone support
+- **Pub/Sub** — event-based fan-out to multiple queues
+- **Dead letter queues** — automatic routing of exhausted-retry jobs
+- **Queue policies** — `standard`, `short`, `singleton`, and `stately` concurrency modes
+- **HTMX dashboard** — real-time web UI for monitoring and managing jobs (no JS framework)
+- **CLI** — command-line tools for migrations, queue management, and scheduling
+- **TypeScript strict** — full type safety with generics throughout the public API
+
+## Architecture
+
+```mermaid
+graph LR
+    subgraph App["Your Application"]
+        Send["boss.send()"]
+        Work["boss.work()"]
+        Pub["boss.publish()"]
+    end
+
+    subgraph BaoBoss["bao-boss"]
+        Manager
+        Worker["Worker (poll loop)"]
+        Scheduler
+        Maintenance
+    end
+
+    subgraph PostgreSQL
+        JobTable["baoboss.job"]
+        QueueTable["baoboss.queue"]
+        ScheduleTable["baoboss.schedule"]
+        SubTable["baoboss.subscription"]
+    end
+
+    Send --> Manager --> JobTable
+    Work --> Worker -->|"SKIP LOCKED"| JobTable
+    Pub --> Manager -->|fan-out| SubTable
+    Scheduler --> ScheduleTable
+    Maintenance -->|"expire / archive / purge / cron"| JobTable
+```
+
+## Job Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> created : send() / insert()
+    created --> active : fetch() / work() [SKIP LOCKED]
+    active --> completed : complete()
+    active --> failed : fail() or expire
+    failed --> created : retry (retryCount < retryLimit)
+    failed --> failed : retries exhausted
+    failed --> DLQ : deadLetter configured
+    created --> cancelled : cancel()
+    active --> cancelled : cancel()
+    cancelled --> created : resume()
+    failed --> created : resume()
+    completed --> [*] : archived & purged
+```
+
+## Request Flow
+
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant Boss as BaoBoss
+    participant PG as PostgreSQL
+
+    App->>Boss: boss.send("emails", payload)
+    Boss->>PG: INSERT INTO baoboss.job
+
+    loop Polling Worker
+        Boss->>PG: SELECT … FOR UPDATE SKIP LOCKED
+        PG-->>Boss: locked job rows
+        Boss->>App: handler(jobs)
+        App-->>Boss: return (success)
+        Boss->>PG: UPDATE state = 'completed'
+    end
+
+    Note over Boss,PG: On handler throw → fail() with retry logic
+```
+
+## Stack Composition
+
+| Layer | Technology | Role |
+|-------|-----------|------|
+| Runtime | [Bun](https://bun.sh) | Native APIs (`Bun.spawn`, `Bun.sleep`, timers) |
+| HTTP / routing | [Elysia](https://elysiajs.com) | Dashboard plugin, type-safe routes |
+| Database ORM | [Prisma](https://www.prisma.io) | Migrations, schema, raw SQL for SKIP LOCKED |
+| Dashboard UI | [htmx](https://htmx.org) | Server-rendered HTML fragments, no JS framework |
+| Language | TypeScript (strict) | Full type safety, generics |
+| Database | PostgreSQL 15+ | `SKIP LOCKED`, `pgcrypto`, `baoboss` schema |
 
 ## Requirements
 
 - [Bun](https://bun.sh) >= 1.0
 - PostgreSQL 15+
+
+---
 
 ## Quick Start
 
@@ -37,10 +122,12 @@ docker compose up -d
 export DATABASE_URL="postgresql://bao:bao@localhost:5432/bao"
 ```
 
-### 3. Run migrations
+### 3. Install and run migrations
 
 ```bash
+bun install
 cd packages/bao-boss
+bunx prisma generate
 bunx prisma migrate deploy
 ```
 
@@ -52,12 +139,19 @@ import { BaoBoss } from 'bao-boss'
 const boss = new BaoBoss({ connectionString: process.env.DATABASE_URL })
 await boss.start()
 
+// Create a queue
+await boss.createQueue('emails', {
+  retryLimit: 3,
+  retryBackoff: true,
+  deadLetter: 'emails-dlq',
+})
+
 // Send a job
 const id = await boss.send('emails', { to: 'user@example.com', subject: 'Hello' })
 
 // Process jobs
 await boss.work('emails', async ([job]) => {
-  console.log('Processing:', job.data)
+  console.log('Sending email to:', job.data.to)
 })
 ```
 
@@ -66,6 +160,8 @@ await boss.work('emails', async ([job]) => {
 ```bash
 bun add bao-boss
 ```
+
+---
 
 ## API Reference
 
@@ -81,23 +177,15 @@ Creates a new BaoBoss instance.
 | `archiveCompletedAfterSeconds` | `number` | `43200` (12h) | Archive completed jobs after |
 | `deleteArchivedAfterDays` | `number` | `7` | Delete archived jobs after |
 | `noSupervisor` | `boolean` | `false` | Disable background maintenance |
-| `shutdownGracePeriodSeconds` | `number` | `30` | Grace period for worker drain |
+| `shutdownGracePeriodSeconds` | `number` | `30` | Grace period for worker drain on `stop()` |
 
 ### `boss.start()`
 
-Connects to the database and starts the maintenance supervisor.
-
-```typescript
-await boss.start()
-```
+Connects to PostgreSQL, ensures the `baoboss` schema exists, and starts the maintenance supervisor.
 
 ### `boss.stop()`
 
-Gracefully stops all workers and disconnects.
-
-```typescript
-await boss.stop()
-```
+Gracefully stops all workers (waits for in-flight handlers), stops maintenance, and disconnects.
 
 ---
 
@@ -105,7 +193,7 @@ await boss.stop()
 
 #### `boss.createQueue(name, options?)`
 
-Creates or updates a queue.
+Creates a queue. Must exist before sending jobs.
 
 ```typescript
 await boss.createQueue('emails', {
@@ -121,16 +209,16 @@ await boss.createQueue('emails', {
 
 **Queue Policies:**
 
-| Policy | Description |
-|--------|-------------|
-| `standard` | Default — multiple jobs can be created and active |
-| `short` | At most one pending job; new sends return the existing job ID |
-| `singleton` | Only one job active at a time |
-| `stately` | Only one job per state transition |
+| Policy | Behaviour |
+|--------|-----------|
+| `standard` | Default FIFO. Multiple jobs of any state allowed. |
+| `short` | At most one `created` job at a time. New `send()` returns existing job ID. |
+| `singleton` | At most one `active` job at a time. Fetch returns empty while one is active. |
+| `stately` | At most one `created` + one `active` simultaneously. |
 
 #### `boss.updateQueue(name, options)`
 
-Updates queue settings.
+Updates queue settings (retry, expiry, dead letter, etc.).
 
 #### `boss.deleteQueue(name)`
 
@@ -138,128 +226,103 @@ Deletes a queue and all its jobs.
 
 #### `boss.purgeQueue(name)`
 
-Deletes all pending (created) jobs from a queue.
+Deletes all pending (`created`) jobs from a queue.
 
-#### `boss.getQueue(name)`
+#### `boss.getQueue(name)` → `Queue | null`
 
-Returns queue details or `null`.
+Returns queue configuration or `null`.
 
-#### `boss.getQueues()`
+#### `boss.getQueues()` → `Queue[]`
 
 Returns all queues.
 
-#### `boss.getQueueSize(name, options?)`
+#### `boss.getQueueSize(name, options?)` → `number`
 
-Returns the number of pending jobs.
+Returns the count of pending + active jobs.
 
 ```typescript
-const size = await boss.getQueueSize('emails')
-const pending = await boss.getQueueSize('emails', { before: 'active' }) // created only
+const total = await boss.getQueueSize('emails')
+const pendingOnly = await boss.getQueueSize('emails', { before: 'active' })
 ```
 
 ---
 
 ### Job Operations
 
-#### `boss.send(queue, data?, options?)`
+#### `boss.send<T>(queue, data?, options?)` → `string`
 
-Sends a job to a queue. Returns the job ID.
+Sends a job to a queue. Returns the job UUID.
 
 ```typescript
 const id = await boss.send('emails', { to: 'user@example.com' }, {
   priority: 10,           // higher = processed first (default: 0)
-  startAfter: 30,         // seconds delay, or Date, or ISO string
+  startAfter: 30,         // delay in seconds, or Date, or ISO string
   retryLimit: 5,
   retryDelay: 10,
   retryBackoff: true,
-  expireIn: 60,
-  singletonKey: 'unique', // prevent duplicate jobs
+  expireIn: 60,           // seconds before active job expires
+  singletonKey: 'unique', // deduplicate by key within queue policy
   deadLetter: 'emails-dlq',
 })
 ```
 
-#### `boss.insert(jobs)`
+#### `boss.insert(jobs)` → `string[]`
 
-Batch-inserts multiple jobs in a single transaction.
+Batch-inserts multiple jobs in a single Prisma transaction.
 
 ```typescript
 const ids = await boss.insert([
   { name: 'emails', data: { to: 'a@example.com' } },
-  { name: 'emails', data: { to: 'b@example.com' } },
+  { name: 'emails', data: { to: 'b@example.com' }, options: { priority: 5 } },
 ])
 ```
 
-#### `boss.fetch(queue, options?)`
+#### `boss.fetch<T>(queue, options?)` → `Job<T>[]`
 
-Manually fetches and locks jobs (SKIP LOCKED).
+Manually fetches and locks jobs using `SELECT … FOR UPDATE SKIP LOCKED`. Jobs transition to `active` state.
 
 ```typescript
 const jobs = await boss.fetch('emails', { batchSize: 5 })
 for (const job of jobs) {
-  // process job...
+  // process...
   await boss.complete(job.id)
 }
 ```
 
 #### `boss.complete(id, options?)`
 
-Marks a job as completed.
+Marks a job (or array of jobs) as `completed`.
 
 ```typescript
 await boss.complete(jobId, { output: { result: 'sent' } })
-// Or complete multiple:
 await boss.complete([id1, id2, id3])
 ```
 
 #### `boss.fail(id, error?)`
 
-Marks a job as failed (will retry if retries remain).
-
-```typescript
-await boss.fail(jobId, new Error('SMTP connection refused'))
-```
+Marks a job as `failed`. If `retryCount < retryLimit`, the job is re-enqueued as `created` with the configured delay. If retries are exhausted and `deadLetter` is configured, a copy is inserted into the DLQ.
 
 #### `boss.cancel(id)`
 
-Cancels a pending or active job.
-
-```typescript
-await boss.cancel(jobId)
-// Or cancel multiple:
-await boss.cancel([id1, id2])
-```
+Cancels a pending or active job (sets state to `cancelled`).
 
 #### `boss.resume(id)`
 
-Re-enqueues a cancelled or failed job.
+Re-enqueues a `cancelled` or `failed` job back to `created`.
 
-```typescript
-await boss.resume(jobId)
-```
+#### `boss.getJobById<T>(id)` → `Job<T> | null`
 
-#### `boss.getJobById(id)`
-
-Fetches a job by ID.
-
-#### `boss.getJobsById(ids)`
-
-Fetches multiple jobs by ID.
+#### `boss.getJobsById<T>(ids)` → `Job<T>[]`
 
 ---
 
 ### Workers
 
-#### `boss.work(queue, options?, handler)`
+#### `boss.work<T>(queue, options?, handler)` → `string`
 
-Starts a worker that polls a queue and processes jobs.
+Starts a polling worker. Returns a worker ID. The handler receives a batch of jobs. Returning normally marks all jobs `completed`; throwing marks them `failed` (with retry).
 
 ```typescript
-interface EmailPayload {
-  to: string
-  subject: string
-  body: string
-}
-
 const workerId = await boss.work<EmailPayload>(
   'emails',
   { batchSize: 5, pollingIntervalSeconds: 1 },
@@ -271,23 +334,20 @@ const workerId = await boss.work<EmailPayload>(
 )
 ```
 
-**WorkOptions:**
-
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `batchSize` | `number` | `1` | Jobs fetched per poll |
-| `pollingIntervalSeconds` | `number` | `2` | Poll interval |
-| `includeMetadata` | `boolean` | `false` | Include job metadata |
-| `priority` | `boolean` | `true` | Process high-priority first |
+| `batchSize` | `number` | `1` | Jobs fetched per poll cycle |
+| `pollingIntervalSeconds` | `number` | `2` | Seconds between polls |
+| `includeMetadata` | `boolean` | `false` | Include full job metadata |
+| `priority` | `boolean` | `true` | Honour priority ordering |
 
 #### `boss.offWork(queueOrWorkerId)`
 
-Stops a worker (by ID or queue name) gracefully, waiting for in-flight jobs.
+Stops a specific worker by ID, or all workers for a queue by name. Waits for in-flight handlers to finish.
 
 ```typescript
-await boss.offWork(workerId)
-// or stop all workers for a queue:
-await boss.offWork('emails')
+await boss.offWork(workerId)     // stop one worker
+await boss.offWork('emails')     // stop all workers on 'emails'
 ```
 
 ---
@@ -296,21 +356,20 @@ await boss.offWork('emails')
 
 #### `boss.schedule(name, cron, data?, options?)`
 
-Creates or updates a cron schedule.
+Creates or updates a cron schedule. The maintenance loop fires a job into the named queue when the cron expression matches.
 
 ```typescript
-// Every day at 8am UTC
 await boss.schedule('daily-digest', '0 8 * * *', { type: 'digest' })
-
-// Every Monday at 9am in a specific timezone
-await boss.schedule('weekly-report', '0 9 * * 1', { report: 'weekly' }, { tz: 'America/New_York' })
+await boss.schedule('weekly-report', '0 9 * * 1', {}, { tz: 'America/New_York' })
 ```
+
+Cron expressions use standard 5-field format: `minute hour day-of-month month day-of-week`.
 
 #### `boss.unschedule(name)`
 
 Removes a cron schedule.
 
-#### `boss.getSchedules()`
+#### `boss.getSchedules()` → `Schedule[]`
 
 Lists all cron schedules.
 
@@ -318,26 +377,19 @@ Lists all cron schedules.
 
 ### Pub/Sub
 
-#### `boss.subscribe(event, queue)`
-
-Subscribes a queue to an event.
+Fan-out events to multiple queues:
 
 ```typescript
-await boss.subscribe('user.registered', 'send-welcome-email')
-await boss.subscribe('user.registered', 'setup-user-account')
+// Subscribe queues to an event
+await boss.subscribe('user.created', 'send-welcome-email')
+await boss.subscribe('user.created', 'provision-account')
+
+// Publish — sends a job copy to each subscribed queue
+await boss.publish('user.created', { userId: 42 })
+
+// Unsubscribe
+await boss.unsubscribe('user.created', 'send-welcome-email')
 ```
-
-#### `boss.publish(event, data?, options?)`
-
-Publishes an event, sending a job to all subscribed queues.
-
-```typescript
-await boss.publish('user.registered', { userId: '123', email: 'new@example.com' })
-```
-
-#### `boss.unsubscribe(event, queue)`
-
-Removes a queue subscription.
 
 ---
 
@@ -354,53 +406,62 @@ await boss.start()
 
 const app = new Elysia()
   .use(baoBossDashboard(boss, {
-    prefix: '/boss',     // URL prefix (default: '/boss')
-    auth: 'secret-token', // Optional bearer/header token
+    prefix: '/boss',       // URL prefix (default: '/boss')
+    auth: 'secret-token',  // optional Bearer / x-bao-token auth
   }))
   .listen(3000)
 ```
 
-Access the dashboard at `http://localhost:3000/boss`.
+**Dashboard routes:**
 
-**Dashboard features:**
-- Live stats (auto-refreshes every 10s via HTMX)
-- Queue listing with pending job counts
-- Per-queue job browser (last 50 jobs)
-- Job detail view with data and output
-- Retry failed/cancelled jobs
-- Cancel pending/active jobs
-- Cron schedule management
-- Dark mode support
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/boss` | Main dashboard (full HTML page with HTMX wiring) |
+| `GET` | `/boss/queues` | Live table of all queues + job counts by state |
+| `GET` | `/boss/queues/:name` | Queue detail: jobs list, state breakdown, settings |
+| `GET` | `/boss/jobs/:id` | Job detail: data, state, retry count, output |
+| `POST` | `/boss/jobs/:id/retry` | Re-enqueue a failed/cancelled job |
+| `DELETE` | `/boss/jobs/:id` | Cancel a job |
+| `GET` | `/boss/schedules` | Cron schedule list |
+| `DELETE` | `/boss/schedules/:name` | Remove a schedule |
+| `GET` | `/boss/stats` | Aggregate stats fragment (queues, total, active, completed, failed) |
+
+- Auto-refreshes via `hx-trigger="every 5s"` (queues) and `every 10s` (stats)
+- Dark/light mode via `prefers-color-scheme`
+- Job data displayed as formatted JSON in `<pre>` blocks
+- Retry, cancel, and delete use `hx-post`/`hx-delete` with `hx-confirm`
 
 ---
 
 ### CLI
 
+The `bao` binary is a Bun script (`packages/bao-boss/src/cli.ts`):
+
 ```bash
-# List queues and job counts
-bao queues
-
-# Purge all pending jobs from a queue
-bao purge my-queue
-
-# Retry a failed job by ID
-bao retry <job-id>
-
-# List cron schedules
-bao schedule:ls
-
-# Remove a cron schedule
-bao schedule:rm daily-digest
+bao migrate              # Run pending Prisma migrations
+bao migrate:reset        # Drop & recreate the baoboss schema
+bao queues               # List all queues and job counts
+bao purge <queue>        # Purge pending jobs from a queue
+bao retry <id>           # Re-enqueue a specific failed job
+bao schedule:ls          # List all cron schedules
+bao schedule:rm <name>   # Remove a cron schedule
 ```
 
 ---
 
 ## Events
 
-`BaoBoss` extends `EventEmitter`:
+`BaoBoss` extends `EventEmitter` and emits typed events:
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `error` | `Error` | Unhandled errors in maintenance loop or workers |
+| `wip` | `{ count: number }` | Periodic heartbeat with in-flight job count |
+| `stopped` | — | Emitted when `stop()` resolves |
 
 ```typescript
 boss.on('error', (err) => console.error('BaoBoss error:', err))
+boss.on('wip', (data) => console.log('Jobs in flight:', data))
 boss.on('stopped', () => console.log('BaoBoss stopped'))
 ```
 
@@ -408,23 +469,58 @@ boss.on('stopped', () => console.log('BaoBoss stopped'))
 
 ## Database Schema
 
-All tables are created in the `baoboss` PostgreSQL schema.
+All tables are created in the `baoboss` PostgreSQL schema. Migrations are managed by Prisma.
 
 | Table | Description |
 |-------|-------------|
-| `baoboss.job` | All jobs with state, retry info, payload |
-| `baoboss.queue` | Queue configuration |
-| `baoboss.schedule` | Cron schedules |
-| `baoboss.subscription` | Event → queue subscriptions |
+| `baoboss.job` | Jobs with state, retry info, payload, timestamps |
+| `baoboss.queue` | Queue configuration and policies |
+| `baoboss.schedule` | Cron schedules with timezone |
+| `baoboss.subscription` | Event → queue pub/sub mappings |
 
-### Job States
+### Maintenance Loop
+
+The background maintenance supervisor runs on `maintenanceIntervalSeconds` and performs:
+
+- **Expire active jobs** — jobs active longer than `expireIn` are marked `failed` and sent to their dead letter queue
+- **Archive completed jobs** — completed/failed jobs older than `archiveCompletedAfterSeconds` are set to `cancelled`
+- **Purge old jobs** — jobs past `keepUntil` are hard-deleted
+- **Fire cron schedules** — sends jobs for any schedules whose cron expression matches the current time
+
+---
+
+## Project Structure
 
 ```
-created → active → completed
-                ↘ failed (retries exhausted) → dead letter queue
-created ← failed (retries remaining)
-created/active → cancelled
-cancelled/failed → created (resume)
+bao-boss/
+├── packages/
+│   └── bao-boss/               # Core library (publishable npm package)
+│       ├── src/
+│       │   ├── index.ts        # Public API exports
+│       │   ├── BaoBoss.ts      # Main class (lifecycle, EventEmitter)
+│       │   ├── Manager.ts      # Queue & job CRUD, SKIP LOCKED fetch
+│       │   ├── Worker.ts       # Polling worker implementation
+│       │   ├── Scheduler.ts    # Cron schedule management
+│       │   ├── Maintenance.ts  # Expiry, archival, purge, cron firing
+│       │   ├── Dashboard.ts    # Elysia plugin with HTMX routes
+│       │   ├── cli.ts          # CLI binary
+│       │   └── types.ts        # TypeScript type definitions
+│       ├── prisma/
+│       │   ├── schema.prisma   # Prisma schema (baoboss namespace)
+│       │   └── migrations/     # Prisma migrations
+│       ├── sql/                # Raw SKIP LOCKED queries
+│       │   ├── fetch_jobs.sql
+│       │   ├── complete_jobs.sql
+│       │   └── fail_jobs.sql
+│       └── test/               # Bun test suite
+│           ├── manager.test.ts
+│           ├── worker.test.ts
+│           ├── schedule.test.ts
+│           └── dashboard.test.ts
+├── apps/
+│   └── example/                # Example Elysia app with dashboard
+├── docker-compose.yaml         # PostgreSQL 15 for local dev
+└── package.json                # Bun workspace root
 ```
 
 ---
@@ -450,6 +546,22 @@ DATABASE_URL=postgresql://bao:bao@localhost:5432/bao bun test
 # Run example app
 cd apps/example && bun run dev
 ```
+
+---
+
+## Differences from pg-boss
+
+| Feature | pg-boss | bao-boss |
+|---------|---------|----------|
+| Runtime | Node.js | **Bun** |
+| Web framework | None (separate package) | **Elysia** (built-in dashboard) |
+| ORM | Raw `pg` client | **Prisma** (+ raw SQL for SKIP LOCKED) |
+| Dashboard | Separate `@pg-boss/dashboard` (React) | **HTMX routes built into the library** |
+| Schema migrations | Internal migration system | **Prisma Migrate** |
+| Scheduler | Custom timekeeper | **Bun-native timers + cron parser** |
+| TypeScript | Compiled | **Runs natively in Bun** |
+
+---
 
 ## License
 
