@@ -16,7 +16,7 @@ bao-boss is a **Bun-native job queue library** built on PostgreSQL, inspired by 
 | Dashboard | htmx | Server-rendered HTML fragments |
 | Language | TypeScript (strict) | Full type safety with generics |
 | Database | PostgreSQL 15+ | SKIP LOCKED, pgcrypto, baoboss schema |
-| Validation | Zod | Runtime input validation |
+| Validation | TypeBox (via Elysia `t`) | Runtime input validation |
 
 ## Repository Structure
 
@@ -88,7 +88,7 @@ The main export is `BaoBoss` class and `baoBossDashboard` Elysia plugin:
 When modifying this codebase:
 
 - Use Prisma for standard CRUD, raw SQL only for SKIP LOCKED operations.
-- Validate inputs with Zod schemas in Manager.ts.
+- Validate inputs with TypeBox schemas (`t` from Elysia, `Value.Decode` from `@sinclair/typebox/value`) in Manager.ts.
 - Return `Job<T>` generic types from all job-returning methods.
 - Emit errors via `boss.emit('error', err)` — never swallow errors silently.
 - Use `Bun.sleep` or `setTimeout` for delays, not busy-waiting.

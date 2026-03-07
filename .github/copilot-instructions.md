@@ -10,7 +10,7 @@ bao-boss is a Bun-native PostgreSQL job queue library with SKIP LOCKED concurren
 - **HTTP**: Elysia for type-safe dashboard routes
 - **ORM**: Prisma for schema/migrations + raw SQL for SKIP LOCKED
 - **Dashboard**: htmx with server-rendered HTML (no React/Vue/Svelte)
-- **Validation**: Zod for input validation
+- **Validation**: TypeBox (via Elysia `t`) for input validation
 - **Language**: TypeScript strict mode
 - **Database**: PostgreSQL 15+ with `baoboss` schema
 
@@ -21,7 +21,7 @@ bao-boss is a Bun-native PostgreSQL job queue library with SKIP LOCKED concurren
 3. ESNext modules — use `.js` extensions in imports
 4. All DB tables in `baoboss` PostgreSQL schema
 5. Use Prisma for CRUD, raw SQL only for `FOR UPDATE SKIP LOCKED` queries
-6. Validate user inputs with Zod in Manager.ts
+6. Validate user inputs with TypeBox (`t` + `Value.Decode`) in Manager.ts
 7. No frontend JS frameworks — dashboard uses htmx
 8. Emit errors via `boss.emit('error', err)`
 9. Use generics (`Job<T>`) for type-safe job data

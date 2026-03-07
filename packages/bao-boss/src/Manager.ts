@@ -1,26 +1,27 @@
 import { PrismaClient, Prisma } from '@prisma/client'
-import { z } from 'zod'
+import { t } from 'elysia'
+import { Value } from '@sinclair/typebox/value'
 import type { Job, Queue, CreateQueueOptions, SendOptions } from './types.js'
 
-const createQueueSchema = z.object({
-  policy: z.enum(['standard', 'short', 'singleton', 'stately']).optional(),
-  retryLimit: z.number().int().min(0).optional(),
-  retryDelay: z.number().int().min(0).optional(),
-  retryBackoff: z.boolean().optional(),
-  expireIn: z.number().int().min(1).optional(),
-  retentionDays: z.number().int().min(1).optional(),
-  deadLetter: z.string().optional(),
+const createQueueSchema = t.Object({
+  policy: t.Optional(t.UnionEnum(['standard', 'short', 'singleton', 'stately'])),
+  retryLimit: t.Optional(t.Integer({ minimum: 0 })),
+  retryDelay: t.Optional(t.Integer({ minimum: 0 })),
+  retryBackoff: t.Optional(t.Boolean()),
+  expireIn: t.Optional(t.Integer({ minimum: 1 })),
+  retentionDays: t.Optional(t.Integer({ minimum: 1 })),
+  deadLetter: t.Optional(t.String()),
 })
 
-const sendOptionsSchema = z.object({
-  priority: z.number().int().optional(),
-  startAfter: z.union([z.number(), z.string(), z.date()]).optional(),
-  retryLimit: z.number().int().min(0).optional(),
-  retryDelay: z.number().int().min(0).optional(),
-  retryBackoff: z.boolean().optional(),
-  expireIn: z.number().int().min(1).optional(),
-  singletonKey: z.string().optional(),
-  deadLetter: z.string().optional(),
+const sendOptionsSchema = t.Object({
+  priority: t.Optional(t.Integer()),
+  startAfter: t.Optional(t.Union([t.Number(), t.String(), t.Date()])),
+  retryLimit: t.Optional(t.Integer({ minimum: 0 })),
+  retryDelay: t.Optional(t.Integer({ minimum: 0 })),
+  retryBackoff: t.Optional(t.Boolean()),
+  expireIn: t.Optional(t.Integer({ minimum: 1 })),
+  singletonKey: t.Optional(t.String()),
+  deadLetter: t.Optional(t.String()),
 })
 
 function resolveStartAfter(startAfter?: number | string | Date): Date {
@@ -60,7 +61,7 @@ export class Manager {
   constructor(private readonly prisma: PrismaClient) {}
 
   async createQueue(name: string, options: CreateQueueOptions = {}): Promise<Queue> {
-    const opts = createQueueSchema.parse(options)
+    const opts = Value.Decode(createQueueSchema, options)
     const q = await this.prisma.queue.upsert({
       where: { name },
       create: {
@@ -116,7 +117,7 @@ export class Manager {
   }
 
   async send<T = unknown>(name: string, data?: T, options: SendOptions = {}): Promise<string> {
-    const opts = sendOptionsSchema.parse(options)
+    const opts = Value.Decode(sendOptionsSchema, options)
 
     // Check queue policy
     const queue = await this.prisma.queue.findUnique({ where: { name } })
@@ -163,7 +164,7 @@ export class Manager {
     const ids: string[] = []
     await this.prisma.$transaction(async (tx) => {
       for (const job of jobs) {
-        const opts = sendOptionsSchema.parse(job.options ?? {})
+        const opts = Value.Decode(sendOptionsSchema, job.options ?? {})
         const queue = await tx.queue.findUnique({ where: { name: job.name } })
         const created = await tx.job.create({
           data: {
@@ -341,7 +342,7 @@ export class Manager {
 
     await this.prisma.$transaction(async (tx) => {
       for (const sub of subs) {
-        const opts = sendOptionsSchema.parse(options ?? {})
+        const opts = Value.Decode(sendOptionsSchema, options ?? {})
         const queue = await tx.queue.findUnique({ where: { name: sub.queue } })
         await tx.job.create({
           data: {
