@@ -6,7 +6,7 @@ const CSRF_HEADER = 'x-csrf-token'
 
 export { CSRF_COOKIE, CSRF_HEADER }
 
-type ElysiaSet = { status?: number }
+type ElysiaSet = { status?: number | string }
 
 export function createAuthMiddleware(
   dashboardAuth: { type: 'better-auth'; auth: BetterAuthSessionApi } | { type: 'bearer'; token: string },

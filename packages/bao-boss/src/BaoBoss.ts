@@ -1,5 +1,5 @@
 import { EventEmitter } from './EventEmitter.js'
-import { PrismaClient } from './generated/prisma/client.js'
+import { PrismaClient, Prisma } from './generated/prisma/client.js'
 import { PrismaPg } from '@prisma/adapter-pg'
 import type { BaoBossOptions, CreateQueueOptions, SendOptions, WorkOptions, Job, Queue, Schedule } from './types.js'
 import { Manager } from './Manager.js'
@@ -13,7 +13,7 @@ export class BaoBoss extends EventEmitter {
   private manager: Manager
   private scheduler: Scheduler
   private maintenance: Maintenance | null = null
-  private workers: Map<string, Worker<unknown>> = new Map()
+  private workers: Map<string, { stop(ms?: number): Promise<void>; readonly queue: string; readonly id: string }> = new Map()
   private started = false
   private stopping = false
   private opts: BaoBossOptions & {
@@ -30,7 +30,7 @@ export class BaoBoss extends EventEmitter {
     super()
     this.opts = {
       connectionString: options.connectionString ?? Bun.env['DATABASE_URL'] ?? '',
-      prisma: options.prisma ?? null,
+      prisma: options.prisma,
       schema: options.schema ?? 'baoboss',
       maintenanceIntervalSeconds: options.maintenanceIntervalSeconds ?? 120,
       archiveCompletedAfterSeconds: options.archiveCompletedAfterSeconds ?? 12 * 60 * 60,
@@ -276,7 +276,7 @@ export class BaoBoss extends EventEmitter {
   }
 
   // Scheduling
-  async schedule(name: string, cron: string, data?: unknown, options?: { tz?: string }): Promise<void> {
+  async schedule(name: string, cron: string, data?: Prisma.InputJsonValue, options?: { tz?: string }): Promise<void> {
     return this.scheduler.schedule(name, cron, data, options)
   }
 

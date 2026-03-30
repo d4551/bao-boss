@@ -2,7 +2,7 @@
  * Minimal EventEmitter implementation — no Node.js dependency.
  * Bun-native: uses only standard JS (Map, Array, Function).
  */
-type Listener = (...args: unknown[]) => void
+type Listener = (...args: never[]) => void
 
 export class EventEmitter {
   private listeners = new Map<string, Listener[]>()
@@ -19,7 +19,7 @@ export class EventEmitter {
     if (!list || list.length === 0) return false
     for (const fn of list) {
       try {
-        fn(...args)
+        (fn as (...a: unknown[]) => void)(...args)
       } catch {
         // Swallow to match Node EventEmitter behavior
       }
