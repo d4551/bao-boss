@@ -5,6 +5,7 @@ export interface MetricsSnapshot {
   jobsFailedTotal: number
   queueDepth: Record<string, number>
   processingDurationSeconds: number
+  perQueue: Record<string, { processed: number; failed: number; durationSeconds: number }>
 }
 
 const counters: { processed: number; failed: number; durationMs: number } = {
@@ -13,24 +14,53 @@ const counters: { processed: number; failed: number; durationMs: number } = {
   durationMs: 0,
 }
 
-export function recordJobCompleted(): void {
+const perQueue: Map<string, { processed: number; failed: number; durationMs: number }> = new Map()
+
+function getQueueCounters(queue: string): { processed: number; failed: number; durationMs: number } {
+  let c = perQueue.get(queue)
+  if (!c) {
+    c = { processed: 0, failed: 0, durationMs: 0 }
+    perQueue.set(queue, c)
+  }
+  return c
+}
+
+export function recordJobCompleted(queue?: string): void {
   counters.processed++
+  if (queue) {
+    getQueueCounters(queue).processed++
+  }
 }
 
-export function recordJobFailed(): void {
+export function recordJobFailed(queue?: string): void {
   counters.failed++
+  if (queue) {
+    getQueueCounters(queue).failed++
+  }
 }
 
-export function recordProcessingDuration(ms: number): void {
+export function recordProcessingDuration(ms: number, queue?: string): void {
   counters.durationMs += ms
+  if (queue) {
+    getQueueCounters(queue).durationMs += ms
+  }
 }
 
 export function getMetricsSnapshot(): MetricsSnapshot {
+  const perQueueSnapshot: Record<string, { processed: number; failed: number; durationSeconds: number }> = {}
+  for (const [queue, c] of perQueue) {
+    perQueueSnapshot[queue] = {
+      processed: c.processed,
+      failed: c.failed,
+      durationSeconds: c.durationMs / 1000,
+    }
+  }
   return {
     jobsProcessedTotal: counters.processed,
     jobsFailedTotal: counters.failed,
     queueDepth: {},
     processingDurationSeconds: counters.durationMs / 1000,
+    perQueue: perQueueSnapshot,
   }
 }
 
@@ -65,6 +95,21 @@ export function toPrometheusFormat(snapshot: MetricsSnapshot): string {
   lines.push('# TYPE baoboss_queue_depth gauge')
   for (const [queue, depth] of Object.entries(snapshot.queueDepth)) {
     lines.push(`baoboss_queue_depth{queue="${queue}"} ${depth}`)
+  }
+  lines.push('# HELP baoboss_jobs_processed_per_queue Jobs completed per queue')
+  lines.push('# TYPE baoboss_jobs_processed_per_queue counter')
+  for (const [queue, stats] of Object.entries(snapshot.perQueue)) {
+    lines.push(`baoboss_jobs_processed_per_queue{queue="${queue}"} ${stats.processed}`)
+  }
+  lines.push('# HELP baoboss_jobs_failed_per_queue Jobs failed per queue')
+  lines.push('# TYPE baoboss_jobs_failed_per_queue counter')
+  for (const [queue, stats] of Object.entries(snapshot.perQueue)) {
+    lines.push(`baoboss_jobs_failed_per_queue{queue="${queue}"} ${stats.failed}`)
+  }
+  lines.push('# HELP baoboss_processing_duration_per_queue_seconds Processing time per queue in seconds')
+  lines.push('# TYPE baoboss_processing_duration_per_queue_seconds counter')
+  for (const [queue, stats] of Object.entries(snapshot.perQueue)) {
+    lines.push(`baoboss_processing_duration_per_queue_seconds{queue="${queue}"} ${stats.durationSeconds}`)
   }
   return lines.join('\n')
 }

@@ -473,6 +473,82 @@ export class Manager {
     })
   }
 
+  async cancelJobs(queue: string, filter?: { state?: 'created' | 'active' }): Promise<number> {
+    const result = await this.prisma.job.updateMany({
+      where: {
+        queue,
+        state: { in: filter?.state ? [filter.state] : ['created', 'active'] },
+      },
+      data: { state: 'cancelled' },
+    })
+    return result.count
+  }
+
+  async resumeJobs(queue: string, filter?: { state?: 'failed' | 'cancelled' }): Promise<number> {
+    const result = await this.prisma.job.updateMany({
+      where: {
+        queue,
+        state: { in: filter?.state ? [filter.state] : ['cancelled', 'failed'] },
+      },
+      data: { state: 'created', retryCount: 0 },
+    })
+    return result.count
+  }
+
+  async searchJobs<T = unknown>(filter: import('./types.js').JobSearchOptions = {}): Promise<{ jobs: Job<T>[]; total: number }> {
+    const where: Record<string, unknown> = {}
+    if (filter.queue) where['queue'] = filter.queue
+    if (filter.state) {
+      where['state'] = Array.isArray(filter.state) ? { in: filter.state } : filter.state
+    }
+    const limit = filter.limit ?? 50
+    const offset = filter.offset ?? 0
+    const sortBy = filter.sortBy ?? 'createdOn'
+    const sortOrder = filter.sortOrder ?? 'desc'
+
+    const [jobs, total] = await Promise.all([
+      this.prisma.job.findMany({
+        where: where as never,
+        orderBy: { [sortBy]: sortOrder },
+        take: limit,
+        skip: offset,
+      }),
+      this.prisma.job.count({ where: where as never }),
+    ])
+
+    return {
+      jobs: jobs.map(j => mapJob<T>(j as unknown as Record<string, unknown>)),
+      total,
+    }
+  }
+
+  async getJobDependencies<T = unknown>(jobId: string): Promise<{ dependsOn: Job<T>[]; dependedBy: Job<T>[] }> {
+    const [upstream, downstream] = await Promise.all([
+      this.prisma.jobDependency.findMany({
+        where: { jobId },
+        select: { dependsOnId: true },
+      }),
+      this.prisma.jobDependency.findMany({
+        where: { dependsOnId: jobId },
+        select: { jobId: true },
+      }),
+    ])
+
+    const [dependsOnJobs, dependedByJobs] = await Promise.all([
+      upstream.length > 0
+        ? this.prisma.job.findMany({ where: { id: { in: upstream.map(d => d.dependsOnId) } } })
+        : [],
+      downstream.length > 0
+        ? this.prisma.job.findMany({ where: { id: { in: downstream.map(d => d.jobId) } } })
+        : [],
+    ])
+
+    return {
+      dependsOn: dependsOnJobs.map(j => mapJob<T>(j as unknown as Record<string, unknown>)),
+      dependedBy: dependedByJobs.map(j => mapJob<T>(j as unknown as Record<string, unknown>)),
+    }
+  }
+
   async progress(id: string, value: number): Promise<void> {
     const p = Math.min(100, Math.max(0, Math.round(value)))
     await this.prisma.job.updateMany({

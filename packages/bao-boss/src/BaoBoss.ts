@@ -13,7 +13,7 @@ export class BaoBoss extends EventEmitter {
   private manager: Manager
   private scheduler: Scheduler
   private maintenance: Maintenance | null = null
-  private workers: Map<string, Worker> = new Map()
+  private workers: Map<string, Worker<unknown>> = new Map()
   private started = false
   private stopping = false
   private opts: BaoBossOptions & {
@@ -21,6 +21,7 @@ export class BaoBoss extends EventEmitter {
     maintenanceIntervalSeconds: number
     archiveCompletedAfterSeconds: number
     deleteArchivedAfterDays: number
+    dlqRetentionDays: number
     noSupervisor: boolean
     shutdownGracePeriodSeconds: number
   }
@@ -34,6 +35,7 @@ export class BaoBoss extends EventEmitter {
       maintenanceIntervalSeconds: options.maintenanceIntervalSeconds ?? 120,
       archiveCompletedAfterSeconds: options.archiveCompletedAfterSeconds ?? 12 * 60 * 60,
       deleteArchivedAfterDays: options.deleteArchivedAfterDays ?? 7,
+      dlqRetentionDays: options.dlqRetentionDays ?? 14,
       noSupervisor: options.noSupervisor ?? false,
       shutdownGracePeriodSeconds: options.shutdownGracePeriodSeconds ?? 30,
       connectionPool: options.connectionPool,
@@ -83,6 +85,7 @@ export class BaoBoss extends EventEmitter {
         intervalSeconds: this.opts.maintenanceIntervalSeconds,
         archiveCompletedAfterSeconds: this.opts.archiveCompletedAfterSeconds,
         deleteArchivedAfterDays: this.opts.deleteArchivedAfterDays,
+        dlqRetentionDays: this.opts.dlqRetentionDays,
       })
       this.maintenance.start()
     }
@@ -116,11 +119,13 @@ export class BaoBoss extends EventEmitter {
   }
 
   async pauseQueue(name: string): Promise<void> {
-    return this.manager.pauseQueue(name)
+    await this.manager.pauseQueue(name)
+    this.emit('queue:paused', { queue: name })
   }
 
   async resumeQueue(name: string): Promise<void> {
-    return this.manager.resumeQueue(name)
+    await this.manager.resumeQueue(name)
+    this.emit('queue:resumed', { queue: name })
   }
 
   async deleteQueue(name: string): Promise<void> {
@@ -166,6 +171,22 @@ export class BaoBoss extends EventEmitter {
 
   async resume(id: string | string[]): Promise<void> {
     return this.manager.resume(id)
+  }
+
+  async cancelJobs(queue: string, filter?: { state?: 'created' | 'active' }): Promise<number> {
+    return this.manager.cancelJobs(queue, filter)
+  }
+
+  async resumeJobs(queue: string, filter?: { state?: 'failed' | 'cancelled' }): Promise<number> {
+    return this.manager.resumeJobs(queue, filter)
+  }
+
+  async searchJobs<T = unknown>(filter?: import('./types.js').JobSearchOptions): Promise<{ jobs: Job<T>[]; total: number }> {
+    return this.manager.searchJobs<T>(filter)
+  }
+
+  async getJobDependencies<T = unknown>(jobId: string): Promise<{ dependsOn: Job<T>[]; dependedBy: Job<T>[] }> {
+    return this.manager.getJobDependencies<T>(jobId)
   }
 
   async getJobById<T = unknown>(id: string): Promise<Job<T> | null> {
@@ -230,7 +251,7 @@ export class BaoBoss extends EventEmitter {
 
     const worker = new Worker<T>(queue, fn, opts, this)
     const workerId = worker.id
-    this.workers.set(workerId, worker as unknown as Worker)
+    this.workers.set(workerId, worker)
     await worker.start()
     return workerId
   }
