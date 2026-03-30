@@ -154,9 +154,4 @@ export interface ManagerOptions {
   onDlq?: (payload: { jobId: string; queue: string; deadLetter: string }) => void
 }
 
-const SCHEMA_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
-
-export function validateSchema(schema: string): string {
-  if (!SCHEMA_RE.test(schema)) throw new Error('Invalid schema name')
-  return schema
-}
+export { validateSchema } from '../schema.js'

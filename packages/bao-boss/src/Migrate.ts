@@ -1,12 +1,7 @@
 import { PrismaClient } from './generated/prisma/client.js'
+import { validateSchema } from './schema.js'
 
 const SCHEMA_VERSION = 2
-const SCHEMA_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
-
-function validateSchema(schema: string): string {
-  if (!SCHEMA_RE.test(schema)) throw new Error('Invalid schema name')
-  return schema
-}
 
 /**
  * Ensures the database schema is up to date. Run before start() when upgrading.

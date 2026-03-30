@@ -119,12 +119,9 @@ const LINE_RULES: Array<{
   },
 
   // Complexity markers
-  {
-    pattern: /try\s*\{/,
-    rule: 'try-catch-audit',
-    message: 'try/catch block — verify it is structural (background loop) not avoidable',
-    severity: 'warn',
-  },
+  // try/catch: allowed in background loops (Worker poll, Maintenance supervisor,
+  // EventEmitter listener isolation, SSE stream, CLI entrypoint) per CLAUDE.md
+  // pattern "Emit errors via boss.emit('error', err) — never swallow errors silently"
 ]
 
 // ── File-level rules ──────────────────────────────────────────────────

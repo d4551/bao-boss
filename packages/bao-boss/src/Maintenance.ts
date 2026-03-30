@@ -1,13 +1,7 @@
 import { PrismaClient, Prisma } from './generated/prisma/client.js'
 import type { BaoBoss } from './BaoBoss.js'
 import { parseCron } from './cron.js'
-
-const SCHEMA_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
-
-function validateSchema(schema: string): string {
-  if (!SCHEMA_RE.test(schema)) throw new Error('Invalid schema name')
-  return schema
-}
+import { validateSchema } from './schema.js'
 
 interface MaintenanceOptions {
   schema?: string
