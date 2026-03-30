@@ -45,7 +45,7 @@ export class BaoBoss extends EventEmitter {
     }
 
     if (options.prisma) {
-      this.prisma = options.prisma as PrismaClient
+      this.prisma = options.prisma
     } else {
       const poolConfig: { connectionString: string; max?: number; min?: number; idleTimeoutMillis?: number; connectionTimeoutMillis?: number; statement_timeout?: number } = {
         connectionString: this.opts.connectionString,

@@ -1,7 +1,7 @@
-import { PrismaClient, Prisma } from './generated/prisma/client.js'
+import { PrismaClient, Prisma, type Job as PrismaJob, type Queue as PrismaQueue, type Policy } from './generated/prisma/client.js'
 import { Type as t } from '@sinclair/typebox'
 import { Value } from '@sinclair/typebox/value'
-import type { Job, Queue, CreateQueueOptions, SendOptions } from './types.js'
+import type { Job, Queue, CreateQueueOptions, SendOptions, QueuePolicy, JobState } from './types.js'
 
 const policySchema = t.Union([t.Literal('standard'), t.Literal('short'), t.Literal('singleton'), t.Literal('stately')])
 
@@ -42,31 +42,108 @@ function resolveStartAfter(startAfter?: number | string | Date): Date {
   return new Date(startAfter)
 }
 
-function mapJob<T>(row: Record<string, unknown>): Job<T> {
+function toDomainJob<T>(row: PrismaJob): Job<T> {
   return {
-    id: row['id'] as string,
-    queue: row['queue'] as string,
-    priority: row['priority'] as number,
-    data: row['data'] as T,
-    state: row['state'] as Job['state'],
-    retryLimit: row['retryLimit'] as number,
-    retryCount: row['retryCount'] as number,
-    retryDelay: row['retryDelay'] as number,
-    retryBackoff: row['retryBackoff'] as boolean,
-    retryJitter: (row['retryJitter'] as boolean) ?? false,
-    startAfter: new Date(row['startAfter'] as string),
-    startedOn: row['startedOn'] != null ? new Date(row['startedOn'] as string) : null,
-    expireIn: row['expireIn'] as number,
-    expireIfNotStartedIn: (row['expireIfNotStartedIn'] as number | null) ?? null,
-    createdOn: new Date(row['createdOn'] as string),
-    completedOn: row['completedOn'] != null ? new Date(row['completedOn'] as string) : null,
-    keepUntil: new Date(row['keepUntil'] as string),
-    singletonKey: (row['singletonKey'] as string | null) ?? null,
-    output: row['output'] as unknown,
-    deadLetter: (row['deadLetter'] as string | null) ?? null,
-    policy: row['policy'] as string | null,
-    progress: (row['progress'] as number | null) ?? null,
+    id: row.id,
+    queue: row.queue,
+    priority: row.priority,
+    data: row.data as T,
+    state: row.state as JobState,
+    retryLimit: row.retryLimit,
+    retryCount: row.retryCount,
+    retryDelay: row.retryDelay,
+    retryBackoff: row.retryBackoff,
+    retryJitter: row.retryJitter,
+    startAfter: row.startAfter,
+    startedOn: row.startedOn,
+    expireIn: row.expireIn,
+    expireIfNotStartedIn: row.expireIfNotStartedIn,
+    createdOn: row.createdOn,
+    completedOn: row.completedOn,
+    keepUntil: row.keepUntil,
+    singletonKey: row.singletonKey,
+    output: row.output,
+    deadLetter: row.deadLetter,
+    policy: row.policy,
+    progress: row.progress,
   }
+}
+
+function toDomainQueue(row: PrismaQueue): Queue {
+  return {
+    name: row.name,
+    policy: row.policy as QueuePolicy,
+    retryLimit: row.retryLimit,
+    retryDelay: row.retryDelay,
+    retryBackoff: row.retryBackoff,
+    retryJitter: row.retryJitter,
+    expireIn: row.expireIn,
+    retentionDays: row.retentionDays,
+    deadLetter: row.deadLetter,
+    paused: row.paused,
+    rateLimit: row.rateLimit as { count: number; period: number } | null,
+    debounce: row.debounce,
+    fairness: row.fairness as { lowPriorityShare: number } | null,
+    createdOn: row.createdOn,
+    updatedOn: row.updatedOn,
+  }
+}
+
+/** Interface for raw SQL RETURNING rows from the fetch query */
+interface RawJobRow {
+  id: string
+  queue: string
+  priority: number
+  data: unknown
+  state: string
+  retryLimit: number
+  retryCount: number
+  retryDelay: number
+  retryBackoff: boolean
+  retryJitter: boolean
+  startAfter: Date | string
+  startedOn: Date | string | null
+  expireIn: number
+  expireIfNotStartedIn: number | null
+  createdOn: Date | string
+  completedOn: Date | string | null
+  keepUntil: Date | string
+  singletonKey: string | null
+  output: unknown
+  deadLetter: string | null
+  policy: string | null
+  progress: number | null
+}
+
+function rawRowToDomainJob<T>(row: RawJobRow): Job<T> {
+  return {
+    id: row.id,
+    queue: row.queue,
+    priority: row.priority,
+    data: row.data as T,
+    state: row.state as JobState,
+    retryLimit: row.retryLimit,
+    retryCount: row.retryCount,
+    retryDelay: row.retryDelay,
+    retryBackoff: row.retryBackoff,
+    retryJitter: row.retryJitter,
+    startAfter: new Date(row.startAfter),
+    startedOn: row.startedOn != null ? new Date(row.startedOn) : null,
+    expireIn: row.expireIn,
+    expireIfNotStartedIn: row.expireIfNotStartedIn,
+    createdOn: new Date(row.createdOn),
+    completedOn: row.completedOn != null ? new Date(row.completedOn) : null,
+    keepUntil: new Date(row.keepUntil),
+    singletonKey: row.singletonKey,
+    output: row.output,
+    deadLetter: row.deadLetter,
+    policy: row.policy,
+    progress: row.progress,
+  }
+}
+
+function toJsonValue(value: unknown): Prisma.InputJsonValue {
+  return value as Prisma.InputJsonValue
 }
 
 const SCHEMA_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
@@ -97,11 +174,12 @@ export class Manager {
 
   async createQueue(name: string, options: CreateQueueOptions = {}): Promise<Queue> {
     const opts = Value.Decode(createQueueSchema, options)
+    const policyValue: Policy = (opts.policy ?? 'standard') as Policy
     const q = await this.prisma.queue.upsert({
       where: { name },
       create: {
         name,
-        policy: (opts.policy ?? 'standard') as never,
+        policy: policyValue,
         retryLimit: opts.retryLimit ?? 2,
         retryDelay: opts.retryDelay ?? 0,
         retryBackoff: opts.retryBackoff ?? false,
@@ -109,12 +187,12 @@ export class Manager {
         expireIn: opts.expireIn ?? 900,
         retentionDays: opts.retentionDays ?? 14,
         deadLetter: opts.deadLetter,
-        rateLimit: opts.rateLimit as never,
+        rateLimit: opts.rateLimit ? toJsonValue(opts.rateLimit) : undefined,
         debounce: opts.debounce,
-        fairness: opts.fairness as never,
+        fairness: opts.fairness ? toJsonValue(opts.fairness) : undefined,
       },
       update: {
-        policy: opts.policy as never,
+        policy: opts.policy ? opts.policy as Policy : undefined,
         retryLimit: opts.retryLimit,
         retryDelay: opts.retryDelay,
         retryBackoff: opts.retryBackoff,
@@ -122,20 +200,32 @@ export class Manager {
         expireIn: opts.expireIn,
         retentionDays: opts.retentionDays,
         deadLetter: opts.deadLetter,
-        rateLimit: opts.rateLimit as never,
+        rateLimit: opts.rateLimit ? toJsonValue(opts.rateLimit) : undefined,
         debounce: opts.debounce,
-        fairness: opts.fairness as never,
+        fairness: opts.fairness ? toJsonValue(opts.fairness) : undefined,
       },
     })
-    return q as unknown as Queue
+    return toDomainQueue(q)
   }
 
   async updateQueue(name: string, options: Partial<CreateQueueOptions>): Promise<Queue> {
+    const data: Prisma.QueueUpdateInput = {}
+    if (options.policy !== undefined) data.policy = options.policy as Policy
+    if (options.retryLimit !== undefined) data.retryLimit = options.retryLimit
+    if (options.retryDelay !== undefined) data.retryDelay = options.retryDelay
+    if (options.retryBackoff !== undefined) data.retryBackoff = options.retryBackoff
+    if (options.retryJitter !== undefined) data.retryJitter = options.retryJitter
+    if (options.expireIn !== undefined) data.expireIn = options.expireIn
+    if (options.retentionDays !== undefined) data.retentionDays = options.retentionDays
+    if (options.deadLetter !== undefined) data.deadLetter = options.deadLetter
+    if (options.rateLimit !== undefined) data.rateLimit = toJsonValue(options.rateLimit)
+    if (options.debounce !== undefined) data.debounce = options.debounce
+    if (options.fairness !== undefined) data.fairness = toJsonValue(options.fairness)
     const q = await this.prisma.queue.update({
       where: { name },
-      data: options as never,
+      data,
     })
-    return q as unknown as Queue
+    return toDomainQueue(q)
   }
 
   async pauseQueue(name: string): Promise<void> {
@@ -167,12 +257,13 @@ export class Manager {
 
   async getQueue(name: string): Promise<Queue | null> {
     const q = await this.prisma.queue.findUnique({ where: { name } })
-    return q as unknown as Queue | null
+    if (!q) return null
+    return toDomainQueue(q)
   }
 
   async getQueues(): Promise<Queue[]> {
     const qs = await this.prisma.queue.findMany()
-    return qs as unknown as Queue[]
+    return qs.map(toDomainQueue)
   }
 
   async send<T = unknown>(name: string, data?: T, options: SendOptions = {}): Promise<string> {
@@ -190,18 +281,18 @@ export class Manager {
         const existing = await this.prisma.debounceState.findUnique({
           where: { queue_debounceKey: { queue: name, debounceKey: 'default' } },
         })
-        const items = existing?.dataAggregate as unknown[] | null
+        const items = Array.isArray(existing?.dataAggregate) ? existing.dataAggregate : null
         const newItems = Array.isArray(items) ? [...items, data] : [data]
         await this.prisma.debounceState.upsert({
           where: { queue_debounceKey: { queue: name, debounceKey: 'default' } },
           create: {
             queue: name,
             debounceKey: 'default',
-            dataAggregate: newItems as never,
+            dataAggregate: toJsonValue(newItems),
             debounceUntil,
           },
           update: {
-            dataAggregate: newItems as never,
+            dataAggregate: toJsonValue(newItems),
             debounceUntil,
           },
         })
@@ -354,8 +445,8 @@ export class Manager {
       RETURNING j.*
     `
     const params = fairness > 0 ? [queue, fairness, effectiveBatch] : [queue, effectiveBatch]
-    const rows = await this.prisma.$queryRawUnsafe<Array<Record<string, unknown>>>(query, ...params)
-    return rows.map(row => mapJob<T>(row))
+    const rows = await this.prisma.$queryRawUnsafe<RawJobRow[]>(query, ...params)
+    return rows.map(row => rawRowToDomainJob<T>(row))
   }
 
   async complete(id: string | string[], options: { output?: unknown } = {}): Promise<void> {
@@ -407,7 +498,7 @@ export class Manager {
     // Call onRetry hook for each job that will be retried
     const retryJobs = jobs.filter(j => j.retryCount < j.retryLimit)
     for (const job of retryJobs) {
-      await this.options.onRetry?.(mapJob(job as unknown as Record<string, unknown>), new Error(errorMsg))
+      await this.options.onRetry?.(toDomainJob(job), new Error(errorMsg))
     }
 
     // Batch retry: jobs with retryCount < retryLimit (with optional jitter)
@@ -496,10 +587,10 @@ export class Manager {
   }
 
   async searchJobs<T = unknown>(filter: import('./types.js').JobSearchOptions = {}): Promise<{ jobs: Job<T>[]; total: number }> {
-    const where: Record<string, unknown> = {}
-    if (filter.queue) where['queue'] = filter.queue
+    const where: Prisma.JobWhereInput = {}
+    if (filter.queue) where.queue = filter.queue
     if (filter.state) {
-      where['state'] = Array.isArray(filter.state) ? { in: filter.state } : filter.state
+      where.state = Array.isArray(filter.state) ? { in: filter.state } : filter.state
     }
     const limit = filter.limit ?? 50
     const offset = filter.offset ?? 0
@@ -508,16 +599,16 @@ export class Manager {
 
     const [jobs, total] = await Promise.all([
       this.prisma.job.findMany({
-        where: where as never,
+        where,
         orderBy: { [sortBy]: sortOrder },
         take: limit,
         skip: offset,
       }),
-      this.prisma.job.count({ where: where as never }),
+      this.prisma.job.count({ where }),
     ])
 
     return {
-      jobs: jobs.map(j => mapJob<T>(j as unknown as Record<string, unknown>)),
+      jobs: jobs.map(j => toDomainJob<T>(j)),
       total,
     }
   }
@@ -544,8 +635,8 @@ export class Manager {
     ])
 
     return {
-      dependsOn: dependsOnJobs.map(j => mapJob<T>(j as unknown as Record<string, unknown>)),
-      dependedBy: dependedByJobs.map(j => mapJob<T>(j as unknown as Record<string, unknown>)),
+      dependsOn: dependsOnJobs.map(j => toDomainJob<T>(j)),
+      dependedBy: dependedByJobs.map(j => toDomainJob<T>(j)),
     }
   }
 
@@ -560,20 +651,20 @@ export class Manager {
   async getJobById<T = unknown>(id: string): Promise<Job<T> | null> {
     const job = await this.prisma.job.findUnique({ where: { id } })
     if (!job) return null
-    return mapJob<T>(job as unknown as Record<string, unknown>)
+    return toDomainJob<T>(job)
   }
 
   async getJobsById<T = unknown>(ids: string[]): Promise<Job<T>[]> {
     const jobs = await this.prisma.job.findMany({ where: { id: { in: ids } } })
-    return jobs.map(j => mapJob<T>(j as unknown as Record<string, unknown>))
+    return jobs.map(j => toDomainJob<T>(j))
   }
 
   async getQueueSize(queue: string, options?: { before?: string }): Promise<number> {
-    const states = options?.before === 'active'
+    const states: JobState[] = options?.before === 'active'
       ? ['created']
       : ['created', 'active']
     const count = await this.prisma.job.count({
-      where: { queue, state: { in: states as never[] } },
+      where: { queue, state: { in: states } },
     })
     return count
   }

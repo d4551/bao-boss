@@ -1,17 +1,19 @@
-import type { BetterAuthSessionApi } from '../Dashboard.js'
 import { t } from '../i18n.js'
+import type { BetterAuthSessionApi } from '../types.js'
 
 const CSRF_COOKIE = 'bao-csrf'
 const CSRF_HEADER = 'x-csrf-token'
 
 export { CSRF_COOKIE, CSRF_HEADER }
 
+type ElysiaSet = { status?: number }
+
 export function createAuthMiddleware(
   dashboardAuth: { type: 'better-auth'; auth: BetterAuthSessionApi } | { type: 'bearer'; token: string },
   locale: string
 ) {
   if (dashboardAuth.type === 'better-auth') {
-    return async ({ request, set }: { request: Request; set: { status?: number } }) => {
+    return async ({ request, set }: { request: Request; set: ElysiaSet }) => {
       const session = await dashboardAuth.auth.getSession({ headers: request.headers })
       if (!session?.user) {
         set.status = 401
@@ -20,8 +22,8 @@ export function createAuthMiddleware(
     }
   }
   const token = dashboardAuth.token
-  return ({ headers, set }: { headers: Record<string, string | undefined>; set: { status?: number } }) => {
-    const provided = (headers['authorization'] as string | undefined)?.replace('Bearer ', '') ?? (headers['x-bao-token'] as string | undefined)
+  return ({ headers, set }: { headers: Record<string, string | undefined>; set: ElysiaSet }) => {
+    const provided = headers['authorization']?.replace('Bearer ', '') ?? headers['x-bao-token']
     if (provided !== token) {
       set.status = 401
       return t('msg.unauthorized', locale)
@@ -30,7 +32,7 @@ export function createAuthMiddleware(
 }
 
 export function createCsrfMiddleware(locale: string) {
-  return async ({ request, set }: { request: Request; set: { status?: number } }) => {
+  return async ({ request, set }: { request: Request; set: ElysiaSet }) => {
     if (['POST', 'DELETE', 'PUT', 'PATCH'].includes(request.method)) {
       const token = request.headers.get(CSRF_HEADER) ?? request.headers.get('x-bao-csrf')
       const cookie = request.headers.get('cookie')?.split(';').find(c => c.trim().startsWith(CSRF_COOKIE + '='))
@@ -50,7 +52,7 @@ export function createRateLimitMiddleware(
   const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
   let lastCleanup = Date.now()
 
-  return ({ request, set }: { request: Request; set: { status?: number } }) => {
+  return ({ request, set }: { request: Request; set: ElysiaSet }) => {
     const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? request.headers.get('x-real-ip') ?? 'unknown'
     const now = Date.now()
     if (now - lastCleanup > 60_000) {

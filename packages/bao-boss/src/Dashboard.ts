@@ -1,12 +1,12 @@
 import { Elysia } from 'elysia'
 import type { BaoBoss } from './BaoBoss.js'
-import { formatDate, formatDateTime, t } from './i18n.js'
+import type { BetterAuthSessionApi } from './types.js'
+export type { BetterAuthSessionApi }
+import { formatDateTime, t } from './i18n.js'
 import { getMetricsSnapshot, getQueueDepths, toPrometheusFormat } from './Metrics.js'
-
-/** Better Auth instance with getSession API. Pass your auth from createAuth(). */
-export interface BetterAuthSessionApi {
-  getSession(options: { headers: Headers | Record<string, string | undefined> }): Promise<{ user?: unknown } | null>
-}
+import { esc, stateBadgeClass, progressBarHtml, emptyRow, queueRowHtml, jobRowHtml } from './dashboard/html.js'
+import { CSRF_HEADER, createAuthMiddleware, createCsrfMiddleware, createRateLimitMiddleware } from './dashboard/middleware.js'
+import { htmlResponse, fragmentResponse } from './dashboard/response.js'
 
 interface DashboardOptions {
   prefix?: string
@@ -24,23 +24,6 @@ interface DashboardOptions {
   rateLimit?: { windowMs: number; max: number }
   lang?: string
   locale?: string
-}
-
-const CSRF_COOKIE = 'bao-csrf'
-const CSRF_HEADER = 'x-csrf-token'
-
-const CSS = `
-main { max-width: 1200px; margin: 0 auto; padding: 2rem; }
-.empty { text-align: center; padding: 2rem; }
-`
-
-function esc(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
 }
 
 function shell(
@@ -68,7 +51,6 @@ ${csrfMeta}
   <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.8/dist/htmx.min.js" integrity="sha384-/TgkGk7p307TH7EXJDuUlgG3Ce1UVolAOFopFekQkkXihi5u/6OCvVKyz1W+idaz" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.4" integrity="sha384-A986SAtodyH8eg8x8irJnYUk7i9inVQqYigD6qZ9evobksGNIXfeFvDwLSHcp31N" crossorigin="anonymous"></script>
 ${csrfScript}
-  <style>${CSS}</style>
 </head>
 <body class="bg-base-100 text-base-content">
   <nav class="navbar bg-primary text-primary-content px-4" role="navigation" aria-label="${t('aria.mainNav', locale)}">
@@ -81,87 +63,51 @@ ${csrfScript}
       <a href="${prefix}/metrics" class="link link-hover opacity-80 hover:opacity-100">${t('nav.metrics', locale)}</a>
     </div>
   </nav>
-  <main aria-label="${t('aria.dashboardContent', locale)}">
+  <main class="max-w-[1200px] mx-auto p-8" aria-label="${t('aria.dashboardContent', locale)}">
     ${content}
   </main>
 </body>
 </html>`
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}): Elysia<any> {
+function queuesTableHtml(rows: string, prefix: string, locale: string): string {
+  return `<table class="table table-zebra" hx-get="${prefix}/queues" hx-trigger="every 5s" hx-swap="outerHTML">
+    <thead><tr>
+      <th scope="col">${t('table.name', locale)}</th><th scope="col">${t('table.policy', locale)}</th><th scope="col">${t('table.pending', locale)}</th><th scope="col">${t('table.retryLimit', locale)}</th><th scope="col">${t('table.deadLetter', locale)}</th><th scope="col">${t('table.created', locale)}</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`
+}
+
+export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}) {
   const prefix = options.prefix ?? '/boss'
   const dashboardAuth = options.dashboardAuth
   const staticAuth = options.auth
   const authToken = dashboardAuth?.type === 'bearer' ? dashboardAuth.token : staticAuth
   const csrfEnabled = options.csrf ?? !!(authToken || dashboardAuth)
-  const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
   const locale = options.locale ?? options.lang ?? 'en'
+  const lang = options.lang ?? 'en'
 
   const app = new Elysia({ prefix })
 
   if (dashboardAuth?.type === 'better-auth') {
-    app.onBeforeHandle({ as: 'global' }, async ({ request, set }) => {
-      const session = await dashboardAuth.auth.getSession({ headers: request.headers })
-      if (!session?.user) {
-        set.status = 401
-        return t('msg.unauthorized', locale)
-      }
-    })
+    app.onBeforeHandle({ as: 'global' }, createAuthMiddleware(dashboardAuth, locale))
   } else if (authToken) {
-    app.onBeforeHandle({ as: 'global' }, ({ headers, set }) => {
-      const token = (headers['authorization'] as string | undefined)?.replace('Bearer ', '') ?? (headers['x-bao-token'] as string | undefined)
-      if (token !== authToken) {
-        set.status = 401
-        return t('msg.unauthorized', locale)
-      }
-    })
+    app.onBeforeHandle({ as: 'global' }, createAuthMiddleware({ type: 'bearer', token: authToken }, locale))
   }
 
   if (csrfEnabled) {
-    app.onBeforeHandle({ as: 'global' }, async ({ request, path, set }) => {
-      if (['POST', 'DELETE', 'PUT', 'PATCH'].includes(request.method)) {
-        const token = request.headers.get(CSRF_HEADER) ?? request.headers.get('x-bao-csrf')
-        const cookie = request.headers.get('cookie')?.split(';').find(c => c.trim().startsWith(CSRF_COOKIE + '='))
-        const cookieToken = cookie?.split('=')[1]?.trim()
-        if (!token || token !== cookieToken) {
-          set.status = 403
-          return t('msg.forbiddenCsrf', locale)
-        }
-      }
-    })
+    app.onBeforeHandle({ as: 'global' }, createCsrfMiddleware(locale))
   }
 
   if (options.rateLimit) {
-    let lastCleanup = Date.now()
-    app.onBeforeHandle({ as: 'global' }, ({ request, set }) => {
-      const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? request.headers.get('x-real-ip') ?? 'unknown'
-      const now = Date.now()
-      // Purge expired entries every 60s
-      if (now - lastCleanup > 60_000) {
-        for (const [key, val] of rateLimitMap) {
-          if (now > val.resetAt) rateLimitMap.delete(key)
-        }
-        lastCleanup = now
-      }
-      const entry = rateLimitMap.get(ip)
-      if (entry) {
-        if (now > entry.resetAt) {
-          rateLimitMap.set(ip, { count: 1, resetAt: now + options.rateLimit!.windowMs })
-        } else if (entry.count >= options.rateLimit!.max) {
-          set.status = 429
-          return t('msg.tooManyRequests', locale)
-        } else {
-          entry.count++
-        }
-      } else {
-        rateLimitMap.set(ip, { count: 1, resetAt: now + options.rateLimit!.windowMs })
-      }
-    })
+    app.onBeforeHandle({ as: 'global' }, createRateLimitMiddleware(options.rateLimit, locale))
   }
 
   const getCsrf = () => (csrfEnabled ? crypto.randomUUID() : undefined)
-  const lang = options.lang ?? 'en'
+
+  const fullPage = (content: string, title: string, csrfToken?: string, status = 200) =>
+    htmlResponse(shell(prefix, content, title, csrfToken, lang, locale), csrfToken, status)
 
   // Main dashboard
   app.get('/', async () => {
@@ -170,17 +116,10 @@ export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}):
     const schedules = await boss.getSchedules()
 
     const queueRows = queues.length === 0
-      ? `<tr><td colspan="6" class="empty text-base-content/70">${t('empty.noQueues', locale)}</td></tr>`
+      ? emptyRow(6, t('empty.noQueues', locale))
       : (await Promise.all(queues.map(async q => {
           const size = await boss.getQueueSize(q.name)
-          return `<tr>
-            <td><a href="${prefix}/queues/${encodeURIComponent(q.name)}" class="link link-primary">${esc(q.name)}</a></td>
-            <td><span class="badge badge-ghost">${esc(q.policy)}</span></td>
-            <td>${size}</td>
-            <td>${q.retryLimit}</td>
-            <td>${q.deadLetter ? esc(q.deadLetter) : t('empty.none', locale)}</td>
-            <td>${formatDate(new Date(q.createdOn), locale)}</td>
-          </tr>`
+          return queueRowHtml(q, prefix, locale, size)
         }))).join('')
 
     const content = `
@@ -189,19 +128,14 @@ export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}):
         <div class="card-body">
           <h2 class="card-title text-lg font-semibold mb-4">${t('section.queues', locale)}</h2>
           <div class="overflow-x-auto">
-            <table class="table table-zebra" hx-get="${prefix}/queues" hx-trigger="every 5s" hx-swap="outerHTML">
-              <thead><tr>
-                <th scope="col">${t('table.name', locale)}</th><th scope="col">${t('table.policy', locale)}</th><th scope="col">${t('table.pending', locale)}</th><th scope="col">${t('table.retryLimit', locale)}</th><th scope="col">${t('table.deadLetter', locale)}</th><th scope="col">${t('table.created', locale)}</th>
-              </tr></thead>
-              <tbody>${queueRows}</tbody>
-            </table>
+            ${queuesTableHtml(queueRows, prefix, locale)}
           </div>
         </div>
       </div>
       <div class="card bg-base-200 shadow-sm mb-6">
         <div class="card-body">
           <h2 class="card-title text-lg font-semibold mb-4">${t('section.schedules', locale)} (${schedules.length})</h2>
-          ${schedules.length === 0 ? `<p class="empty text-base-content/70">${t('empty.noSchedules', locale)}</p>` : `
+          ${schedules.length === 0 ? `<p class="text-center p-8 text-base-content/70">${t('empty.noSchedules', locale)}</p>` : `
           <div class="overflow-x-auto">
             <table class="table table-zebra">
               <thead><tr><th scope="col">${t('table.name', locale)}</th><th scope="col">${t('table.cron', locale)}</th><th scope="col">${t('table.timezone', locale)}</th><th scope="col">${t('table.actions', locale)}</th></tr></thead>
@@ -225,9 +159,7 @@ export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}):
         </div>
       </div>
     `
-    const headers: Record<string, string> = { 'Content-Type': 'text/html' }
-    if (csrfToken) headers['Set-Cookie'] = `${CSRF_COOKIE}=${csrfToken}; Path=/; HttpOnly; SameSite=Strict`
-    return new Response(shell(prefix, content, t('title.dashboard', locale), csrfToken, lang, locale), { headers })
+    return fullPage(content, t('title.dashboard', locale), csrfToken)
   })
 
   // Queues list fragment
@@ -235,23 +167,12 @@ export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}):
     const queues = await boss.getQueues()
     const rows = await Promise.all(queues.map(async q => {
       const size = await boss.getQueueSize(q.name)
-      return `<tr>
-        <td><a href="${prefix}/queues/${encodeURIComponent(q.name)}" class="link link-primary">${esc(q.name)}</a></td>
-        <td><span class="badge badge-ghost">${esc(q.policy)}</span></td>
-        <td>${size}</td>
-        <td>${q.retryLimit}</td>
-        <td>${q.deadLetter ? esc(q.deadLetter) : t('empty.none', locale)}</td>
-        <td>${formatDate(new Date(q.createdOn), locale)}</td>
-      </tr>`
+      return queueRowHtml(q, prefix, locale, size)
     }))
-    return new Response(`
-      <table class="table table-zebra" hx-get="${prefix}/queues" hx-trigger="every 5s" hx-swap="outerHTML">
-        <thead><tr>
-          <th scope="col">${t('table.name', locale)}</th><th scope="col">${t('table.policy', locale)}</th><th scope="col">${t('table.pending', locale)}</th><th scope="col">${t('table.retryLimit', locale)}</th><th scope="col">${t('table.deadLetter', locale)}</th><th scope="col">${t('table.created', locale)}</th>
-        </tr></thead>
-        <tbody>${rows.length === 0 ? `<tr><td colspan="6" class="empty text-base-content/70">${t('empty.noQueuesShort', locale)}</td></tr>` : rows.join('')}</tbody>
-      </table>
-    `, { headers: { 'Content-Type': 'text/html' } })
+    return fragmentResponse(queuesTableHtml(
+      rows.length === 0 ? emptyRow(6, t('empty.noQueuesShort', locale)) : rows.join(''),
+      prefix, locale
+    ))
   })
 
   // Queue detail
@@ -260,12 +181,7 @@ export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}):
     const { name } = params
     const queue = await boss.getQueue(name)
     if (!queue) {
-      const headers: Record<string, string> = { 'Content-Type': 'text/html' }
-      if (csrfToken) headers['Set-Cookie'] = `${CSRF_COOKIE}=${csrfToken}; Path=/; HttpOnly; SameSite=Strict`
-      return new Response(shell(prefix, `<p>${t('msg.queueNotFound', locale)}</p>`, `${t('section.queue', locale)}: ${esc(name)}`, csrfToken, lang, locale), {
-        status: 404,
-        headers,
-      })
+      return fullPage(`<p>${t('msg.queueNotFound', locale)}</p>`, `${t('section.queue', locale)}: ${esc(name)}`, csrfToken, 404)
     }
 
     const [created, active, completed, failed, cancelled, dlqDepth] = await Promise.all([
@@ -277,10 +193,11 @@ export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}):
       queue.deadLetter ? boss.getDLQDepth(queue.deadLetter) : Promise.resolve(0),
     ])
 
-    const jobs = await boss.prisma.job.findMany({
-      where: { queue: name },
-      orderBy: { createdOn: 'desc' },
-      take: 50,
+    const { jobs } = await boss.searchJobs({
+      queue: name,
+      limit: 50,
+      sortBy: 'createdOn',
+      sortOrder: 'desc',
     })
 
     const content = `
@@ -319,40 +236,14 @@ export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}):
             <table class="table table-zebra">
               <thead><tr><th scope="col">${t('table.id', locale)}</th><th scope="col">${t('table.state', locale)}</th><th scope="col">${t('table.priority', locale)}</th><th scope="col">${t('table.created', locale)}</th><th scope="col">${t('table.actions', locale)}</th></tr></thead>
               <tbody>
-            ${jobs.map(j => {
-              const badgeClass = j.state === 'created' ? 'badge-info' : j.state === 'active' ? 'badge-warning' : j.state === 'completed' ? 'badge-success' : j.state === 'failed' ? 'badge-error' : 'badge-ghost'
-              return `<tr>
-              <td><a href="${prefix}/jobs/${j.id}" class="link link-primary">${j.id.slice(0, 8)}…</a></td>
-              <td><span class="badge ${badgeClass}">${j.state}</span></td>
-              <td>${j.priority}</td>
-              <td>${formatDateTime(new Date(j.createdOn), locale)}</td>
-              <td>
-                ${j.state === 'failed' || j.state === 'cancelled' ? `
-                  <button class="btn btn-primary btn-sm mr-1" type="button"
-                    aria-label="${t('aria.retryJob', locale)} ${j.id.slice(0, 8)}"
-                    hx-post="${prefix}/jobs/${j.id}/retry"
-                    hx-confirm="${t('confirm.retryJob', locale).replace('{id}', j.id.slice(0, 8))}"
-                    hx-swap="outerHTML" hx-target="closest tr">${t('btn.retry', locale)}</button>
-                ` : ''}
-                ${j.state !== 'completed' && j.state !== 'cancelled' ? `
-                  <button class="btn btn-error btn-sm" type="button"
-                    aria-label="${t('aria.cancelJob', locale)} ${j.id.slice(0, 8)}"
-                    hx-delete="${prefix}/jobs/${j.id}"
-                    hx-confirm="${t('confirm.cancelJob', locale).replace('{id}', j.id.slice(0, 8))}"
-                    hx-swap="outerHTML" hx-target="closest tr">${t('btn.cancel', locale)}</button>
-                ` : ''}
-              </td>
-            </tr>`
-            }).join('')}
+            ${jobs.map(j => jobRowHtml(j, prefix, locale)).join('')}
               </tbody>
             </table>
           </div>
         </div>
       </div>
     `
-    const headers: Record<string, string> = { 'Content-Type': 'text/html' }
-    if (csrfToken) headers['Set-Cookie'] = `${CSRF_COOKIE}=${csrfToken}; Path=/; HttpOnly; SameSite=Strict`
-    return new Response(shell(prefix, content, `${t('section.queue', locale)}: ${name}`, csrfToken, lang, locale), { headers })
+    return fullPage(content, `${t('section.queue', locale)}: ${name}`, csrfToken)
   })
 
   // Job detail
@@ -360,14 +251,10 @@ export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}):
     const csrfToken = getCsrf()
     const job = await boss.getJobById(params.id)
     if (!job) {
-      const headers: Record<string, string> = { 'Content-Type': 'text/html' }
-      if (csrfToken) headers['Set-Cookie'] = `${CSRF_COOKIE}=${csrfToken}; Path=/; HttpOnly; SameSite=Strict`
-      return new Response(shell(prefix, `<p>${t('msg.jobNotFound', locale)}</p>`, t('msg.jobNotFound', locale), csrfToken, lang, locale), {
-        status: 404,
-        headers,
-      })
+      return fullPage(`<p>${t('msg.jobNotFound', locale)}</p>`, t('msg.jobNotFound', locale), csrfToken, 404)
     }
-    const badgeClass = job.state === 'created' ? 'badge-info' : job.state === 'active' ? 'badge-warning' : job.state === 'completed' ? 'badge-success' : job.state === 'failed' ? 'badge-error' : 'badge-ghost'
+    const badgeClass = stateBadgeClass(job.state)
+    const terminalStates = ['completed', 'failed', 'cancelled']
     const content = `
       <h2 class="text-xl font-semibold mb-4">${t('section.job', locale)}: ${job.id}</h2>
       <div class="card bg-base-200 shadow-sm">
@@ -381,12 +268,10 @@ export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}):
                 <tr><td>${t('table.state', locale)}</td><td><span class="badge ${badgeClass}">${job.state}</span></td></tr>
                 <tr><td>${t('table.priority', locale)}</td><td>${job.priority}</td></tr>
                 <tr><td>${t('field.retryCount', locale)}</td><td>${job.retryCount} / ${job.retryLimit}</td></tr>
-                ${(job as { progress?: number | null }).progress != null ? (() => {
-  const p = (job as { progress?: number }).progress ?? 0;
-  const progressBar = `<progress class="progress progress-primary w-48" value="${p}" max="100" role="progressbar" aria-valuenow="${p}" aria-valuemin="0" aria-valuemax="100" aria-valuetext="${p} ${t('aria.progressPercent', locale)}"></progress>`;
-  const terminalStates = ['completed', 'failed', 'cancelled'];
+                ${job.progress != null ? (() => {
+  const bar = progressBarHtml(job.progress, locale);
   const useSse = !terminalStates.includes(job.state);
-  return `<tr><td>${t('field.progress', locale)}</td><td>${useSse ? `<div hx-ext="sse" sse-connect="${prefix}/sse/progress/${job.id}?locale=${encodeURIComponent(locale)}" sse-swap="progress" hx-swap="innerHTML">${progressBar}</div>` : progressBar}</td></tr>`;
+  return `<tr><td>${t('field.progress', locale)}</td><td>${useSse ? `<div hx-ext="sse" sse-connect="${prefix}/sse/progress/${job.id}?locale=${encodeURIComponent(locale)}" sse-swap="progress" hx-swap="innerHTML">${bar}</div>` : bar}</td></tr>`;
 })() : ''}
                 <tr><td>${t('stat.created', locale)}</td><td>${formatDateTime(new Date(job.createdOn), locale)}</td></tr>
                 <tr><td>${t('field.startAfter', locale)}</td><td>${formatDateTime(new Date(job.startAfter), locale)}</td></tr>
@@ -421,25 +306,19 @@ export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}):
         </div>
       </div>
     `
-    const headers: Record<string, string> = { 'Content-Type': 'text/html' }
-    if (csrfToken) headers['Set-Cookie'] = `${CSRF_COOKIE}=${csrfToken}; Path=/; HttpOnly; SameSite=Strict`
-    return new Response(shell(prefix, content, `${t('section.job', locale)}: ${job.id}`, csrfToken, lang, locale), { headers })
+    return fullPage(content, `${t('section.job', locale)}: ${job.id}`, csrfToken)
   })
 
   // Retry job
   app.post('/jobs/:id/retry', async ({ params }) => {
     await boss.resume(params.id)
-    return new Response(`<tr><td colspan="5" class="text-success">${t('msg.jobQueuedRetry', locale)}</td></tr>`, {
-      headers: { 'Content-Type': 'text/html' },
-    })
+    return fragmentResponse(`<tr><td colspan="5" class="text-success">${t('msg.jobQueuedRetry', locale)}</td></tr>`)
   })
 
   // Cancel job
   app.delete('/jobs/:id', async ({ params }) => {
     await boss.cancel(params.id)
-    return new Response(`<tr><td colspan="5" class="text-base-content/70">${t('msg.jobCancelled', locale)}</td></tr>`, {
-      headers: { 'Content-Type': 'text/html' },
-    })
+    return fragmentResponse(`<tr><td colspan="5" class="text-base-content/70">${t('msg.jobCancelled', locale)}</td></tr>`)
   })
 
   // Schedules list
@@ -455,7 +334,7 @@ export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}):
               <thead><tr><th scope="col">${t('table.name', locale)}</th><th scope="col">${t('table.cron', locale)}</th><th scope="col">${t('table.timezone', locale)}</th><th scope="col">${t('table.created', locale)}</th><th scope="col">${t('table.actions', locale)}</th></tr></thead>
               <tbody>
             ${schedules.length === 0
-              ? `<tr><td colspan="5" class="empty text-base-content/70">${t('empty.noSchedules', locale)}</td></tr>`
+              ? emptyRow(5, t('empty.noSchedules', locale))
               : schedules.map(s => `<tr>
                   <td>${esc(s.name)}</td>
                   <td><code>${esc(s.cron)}</code></td>
@@ -475,21 +354,19 @@ export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}):
         </div>
       </div>
     `
-    const headers: Record<string, string> = { 'Content-Type': 'text/html' }
-    if (csrfToken) headers['Set-Cookie'] = `${CSRF_COOKIE}=${csrfToken}; Path=/; HttpOnly; SameSite=Strict`
-    return new Response(shell(prefix, content, t('section.schedules', locale), csrfToken, lang, locale), { headers })
+    return fullPage(content, t('section.schedules', locale), csrfToken)
   })
 
   // Delete schedule
   app.delete('/schedules/:name', async ({ params }) => {
     await boss.unschedule(params.name)
-    return new Response('', { headers: { 'Content-Type': 'text/html' } })
+    return fragmentResponse('')
   })
 
   // SSE progress stream for live job progress
   app.get('/sse/progress/:id', async ({ params, query, set }) => {
     const job = await boss.getJobById(params.id)
-    const loc = (query.locale as string) ?? 'en'
+    const loc = String(query.locale ?? 'en')
     if (!job) {
       set.status = 404
       return t('msg.jobNotFound', loc)
@@ -503,17 +380,12 @@ export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}):
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder()
-        let lastProgress: number | null = (job as { progress?: number | null }).progress ?? null
-
-        const progressHtml = (p: number | null) => {
-          const val = p ?? 0
-          return `<progress class="progress progress-primary w-48" value="${val}" max="100" role="progressbar" aria-valuenow="${val}" aria-valuemin="0" aria-valuemax="100" aria-valuetext="${val} ${t('aria.progressPercent', loc)}"></progress>`
-        }
+        let lastProgress: number | null = job.progress ?? null
 
         const send = (event: string, data: string) =>
           controller.enqueue(encoder.encode(`event: ${event}\ndata: ${data.replace(/\n/g, '\ndata: ')}\n\n`))
 
-        send('progress', progressHtml(lastProgress))
+        send('progress', progressBarHtml(lastProgress, loc))
 
         const interval = setInterval(async () => {
           try {
@@ -524,10 +396,10 @@ export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}):
               controller.close()
               return
             }
-            const p = (j as { progress?: number | null }).progress ?? null
+            const p = j.progress ?? null
             if (p !== lastProgress) {
               lastProgress = p
-              send('progress', progressHtml(p))
+              send('progress', progressBarHtml(p, loc))
             }
           } catch {
             clearInterval(interval)
@@ -565,7 +437,7 @@ export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}):
       boss.prisma.job.count({ where: { state: 'completed' } }),
     ])
 
-    return new Response(`
+    return fragmentResponse(`
       <div class="stats stats-vertical lg:stats-horizontal shadow mb-6" role="region" aria-label="${t('aria.dashboardStats', locale)}" hx-get="${prefix}/stats" hx-trigger="every 10s" hx-swap="outerHTML">
         <div class="stat"><div class="stat-value text-primary">${queues.length}</div><div class="stat-title">${t('stat.queues', locale)}</div></div>
         <div class="stat"><div class="stat-value text-primary">${totalJobs}</div><div class="stat-title">${t('stat.totalJobs', locale)}</div></div>
@@ -573,7 +445,7 @@ export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}):
         <div class="stat"><div class="stat-value text-primary">${completedJobs}</div><div class="stat-title">${t('stat.completed', locale)}</div></div>
         <div class="stat"><div class="stat-value text-primary">${failedJobs}</div><div class="stat-title">${t('stat.failed', locale)}</div></div>
       </div>
-    `, { headers: { 'Content-Type': 'text/html' } })
+    `)
   })
 
   return app

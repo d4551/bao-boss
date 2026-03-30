@@ -155,7 +155,7 @@ export class Maintenance {
     for (const schedule of schedules) {
       try {
         const matches = parseCron(schedule.cron)
-        const tz = (schedule.timezone as string) || 'UTC'
+        const tz = schedule.timezone || 'UTC'
         const tzNow = new Date(now.toLocaleString('en-US', { timeZone: tz }))
         if (matches(tzNow)) {
           // Distributed lock: only one instance fires per minute

@@ -104,9 +104,13 @@ export interface JobSearchOptions {
   sortOrder?: 'asc' | 'desc'
 }
 
+export interface BetterAuthSessionApi {
+  getSession(options: { headers: Headers | Record<string, string | undefined> }): Promise<{ user?: unknown } | null>
+}
+
 export interface BaoBossOptions {
   connectionString?: string
-  prisma?: unknown
+  prisma?: import('./generated/prisma/client.js').PrismaClient
   schema?: string
   maintenanceIntervalSeconds?: number
   archiveCompletedAfterSeconds?: number
