@@ -77,8 +77,6 @@ export interface SendOptions {
 export interface WorkOptions {
   batchSize?: number
   pollingIntervalSeconds?: number
-  includeMetadata?: boolean
-  priority?: boolean
   maxConcurrency?: number
   handlerTimeoutSeconds?: number
 }
@@ -97,9 +95,22 @@ export interface CreateQueueOptions {
   fairness?: { lowPriorityShare: number }
 }
 
+export interface JobSearchOptions {
+  queue?: string
+  state?: JobState | JobState[]
+  limit?: number
+  offset?: number
+  sortBy?: 'createdOn' | 'priority' | 'startAfter'
+  sortOrder?: 'asc' | 'desc'
+}
+
+export interface BetterAuthSessionApi {
+  getSession(options: { headers: Headers | Record<string, string | undefined> }): Promise<{ user?: unknown } | null>
+}
+
 export interface BaoBossOptions {
   connectionString?: string
-  prisma?: unknown
+  prisma?: import('./generated/prisma/client.js').PrismaClient
   schema?: string
   maintenanceIntervalSeconds?: number
   archiveCompletedAfterSeconds?: number
@@ -115,4 +126,5 @@ export interface BaoBossOptions {
   onBeforeFetch?: (queue: string) => Promise<void>
   onAfterComplete?: (jobs: Job[]) => Promise<void>
   onRetry?: (job: Job, error: Error) => Promise<void>
+  dlqRetentionDays?: number
 }

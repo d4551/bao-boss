@@ -27,21 +27,37 @@ bao-boss/
 │   │   ├── index.ts          # Public API exports
 │   │   ├── BaoBoss.ts        # Main class — lifecycle, EventEmitter
 │   │   ├── EventEmitter.ts   # Minimal EventEmitter (no Node dependency)
-│   │   ├── Manager.ts        # Queue & job CRUD, SKIP LOCKED fetch
+│   │   ├── Manager.ts        # Facade delegating to manager/ modules
 │   │   ├── Worker.ts         # Polling worker implementation
-│   │   ├── Scheduler.ts      # Cron schedule management
+│   │   ├── Scheduler.ts      # Cron schedule management (with validation)
 │   │   ├── Maintenance.ts    # Expiry, archival, purge, cron firing
-│   │   ├── Dashboard.ts      # Elysia plugin with HTMX routes
+│   │   ├── Dashboard.ts      # Elysia plugin (route wiring)
 │   │   ├── Migrate.ts        # Prisma migration runner
-│   │   ├── Metrics.ts        # Prometheus metrics
-│   │   ├── i18n.ts           # Dashboard message keys
+│   │   ├── Metrics.ts        # Per-queue Prometheus metrics
+│   │   ├── i18n.ts           # Dashboard i18n message keys
 │   │   ├── cli.ts            # CLI binary (bao command)
-│   │   └── types.ts          # TypeScript type definitions
+│   │   ├── cron.ts           # Cron parser, validator, describer
+│   │   ├── schema.ts         # Schema name validation (centralized)
+│   │   ├── types.ts          # TypeScript type definitions
+│   │   ├── manager/          # Decomposed Manager modules
+│   │   │   ├── mappers.ts    # Prisma-to-domain type mappers
+│   │   │   ├── queue-ops.ts  # Queue CRUD operations
+│   │   │   ├── job-ops.ts    # Job mutations (send, fetch, fail)
+│   │   │   ├── job-queries.ts # Job queries (search, deps, progress)
+│   │   │   └── pubsub.ts     # Pub/Sub operations
+│   │   └── dashboard/        # Decomposed Dashboard modules
+│   │       ├── routes.ts     # Route handler functions
+│   │       ├── sse.ts        # SSE progress streaming
+│   │       ├── html.ts       # HTML rendering helpers
+│   │       ├── middleware.ts  # Auth, CSRF, rate limiting
+│   │       └── response.ts   # Response builders
+│   ├── scripts/
+│   │   └── lint.ts           # Project-specific lint
 │   ├── prisma/
 │   │   ├── schema.prisma     # Prisma schema (baoboss namespace)
 │   │   └── migrations/       # Prisma migrations
 │   ├── sql/                  # Raw SKIP LOCKED query files
-│   └── test/                 # Bun test suite
+│   └── test/                 # 18 test files, 129 tests
 ├── apps/example/             # Example Elysia app with dashboard
 ├── docker-compose.yaml       # PostgreSQL 17 for local dev
 └── package.json              # Bun workspace root
@@ -68,6 +84,11 @@ bao-boss/
 7. **Graceful shutdown** — workers drain in-flight handlers before stopping.
 8. **Migrate** — uses `Bun.spawn` (async, non-blocking) for `prisma migrate deploy`.
 9. **Separate dashboard entrypoint** — `bao-boss/dashboard` keeps Elysia as an optional peer dependency.
+10. **Decomposed Manager** — Manager.ts is a thin facade delegating to manager/ submodules (queue-ops, job-ops, job-queries, pubsub, mappers).
+11. **Decomposed Dashboard** — Dashboard.ts is route wiring only; handlers, middleware, HTML helpers, and SSE in dashboard/ submodules.
+12. **Centralized schema validation** — `schema.ts` is single source for SCHEMA_RE and validateSchema.
+13. **Cron module** — `cron.ts` extracts cron parsing, validation, and description from Maintenance.ts.
+14. **Per-queue metrics** — Metrics.ts tracks counters per queue, exports Prometheus labels.
 
 ## Common Commands
 
@@ -78,6 +99,7 @@ cd packages/bao-boss && bunx prisma generate  # Generate Prisma client
 bunx prisma migrate deploy              # Run migrations
 DATABASE_URL=postgresql://bao:bao@localhost:5432/bao bun test  # Run tests
 cd apps/example && bun run dev          # Run example app
+cd packages/bao-boss && bun run lint    # Run project lint
 ```
 
 ## Public API Surface
@@ -85,12 +107,12 @@ cd apps/example && bun run dev          # Run example app
 The main entrypoint (`bao-boss`) exports `BaoBoss` class and types. The dashboard is a separate entrypoint (`bao-boss/dashboard`) to keep Elysia optional:
 
 - **Queue management**: `createQueue`, `updateQueue`, `deleteQueue`, `purgeQueue`, `getQueue`, `getQueues`, `pauseQueue`, `resumeQueue`
-- **Job operations**: `send`, `insert`, `fetch`, `complete`, `fail`, `cancel`, `resume`, `getJobById`, `getJobsById`, `progress`
+- **Job operations**: `send`, `insert`, `fetch`, `complete`, `fail`, `cancel`, `resume`, `getJobById`, `getJobsById`, `progress`, `searchJobs`, `cancelJobs`, `resumeJobs`, `getJobDependencies`
 - **Workers**: `work` (start polling worker), `offWork` (stop worker)
 - **Scheduling**: `schedule`, `unschedule`, `getSchedules`
 - **Pub/Sub**: `publish`, `subscribe`, `unsubscribe`
 - **Lifecycle**: `start`, `stop`
-- **Utilities**: `migrate`, `getDLQDepth`, `migrate`; metrics exports: `getMetricsSnapshot`, `getQueueDepths`, `toPrometheusFormat`
+- **Utilities**: `migrate`, `getDLQDepth`, `validateCron`, `describeCron`; metrics exports: `getMetricsSnapshot`, `getQueueDepths`, `toPrometheusFormat`
 
 ## Code Patterns to Follow
 
@@ -104,3 +126,8 @@ When modifying this codebase:
 - Dashboard HTML is inline in Dashboard.ts — no template files.
 - Dashboard: use `t()` from i18n.ts for all user-facing strings; add ARIA attributes (`scope="col"`, `aria-label`, `type="button"`) on tables and buttons.
 - Keep the CLI simple — each command creates a BaoBoss instance, performs one action, then stops.
+- Run `bun run lint` before committing — ensures 0 errors for typecasts, i18n, ARIA, HTMX, file/function length, DRY.
+- No `as unknown`, `as never`, `as any` typecasts — use typed domain mappers in `manager/mappers.ts`.
+- Keep files under 350 lines and functions under 60 lines.
+- Import `validateSchema` from `schema.ts` (not local copies).
+- Import `parseCron` from `cron.ts` (not local definitions).

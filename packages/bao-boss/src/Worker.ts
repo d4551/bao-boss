@@ -42,8 +42,6 @@ export class Worker<T = unknown> {
     this.opts = {
       batchSize: opts.batchSize ?? 1,
       pollingIntervalSeconds: opts.pollingIntervalSeconds ?? 2,
-      includeMetadata: opts.includeMetadata ?? false,
-      priority: opts.priority ?? true,
       maxConcurrency: opts.maxConcurrency ?? Infinity,
       handlerTimeoutSeconds: opts.handlerTimeoutSeconds ?? undefined,
     }
@@ -74,7 +72,7 @@ export class Worker<T = unknown> {
               await Promise.race([
                 this.handler(jobs),
                 new Promise<never>((_, reject) => {
-                  ac.signal.addEventListener('abort', () => reject(new Error('Handler timeout')))
+                  ac.signal.addEventListener('abort', () => reject(new Error(`Handler timed out after ${this.opts.handlerTimeoutSeconds}s on queue "${this.queue}"`)))
                 }),
               ])
             } finally {
@@ -87,12 +85,12 @@ export class Worker<T = unknown> {
         try {
           const start = Date.now()
           await runHandler()
-          recordProcessingDuration(Date.now() - start)
-          for (let i = 0; i < jobs.length; i++) recordJobCompleted()
+          recordProcessingDuration(Date.now() - start, this.queue)
+          for (let i = 0; i < jobs.length; i++) recordJobCompleted(this.queue)
           await this.boss.complete(jobs.map((j: Job<T>) => j.id))
           await this.boss.runAfterComplete(jobs)
         } catch (err) {
-          for (let i = 0; i < jobs.length; i++) recordJobFailed()
+          for (let i = 0; i < jobs.length; i++) recordJobFailed(this.queue)
           const error = err instanceof Error ? err : new Error(String(err))
           for (const job of jobs) {
             await this.boss.fail(job.id, error)

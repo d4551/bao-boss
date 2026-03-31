@@ -10,7 +10,9 @@ export {
 } from './Metrics.js'
 export type { MetricsSnapshot } from './Metrics.js'
 export type { Job, Queue, Schedule, Subscription, JobState, QueuePolicy } from './types.js'
-export type { SendOptions, WorkOptions, CreateQueueOptions, BaoBossOptions } from './types.js'
+export type { SendOptions, WorkOptions, CreateQueueOptions, BaoBossOptions, JobSearchOptions, BetterAuthSessionApi } from './types.js'
+
+export { validateCron, describeCron } from './cron.js'
 
 // Dashboard is available via separate entrypoint: import { baoBossDashboard } from 'bao-boss/dashboard'
 // This keeps elysia as an optional peer dependency for consumers who don't need the dashboard.

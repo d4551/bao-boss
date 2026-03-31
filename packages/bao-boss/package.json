@@ -16,6 +16,7 @@
     "src",
     "prisma",
     "sql",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "engines": {
@@ -24,6 +25,7 @@
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "build": "bun build src/index.ts --outdir dist --target bun",
+    "lint": "bun run scripts/lint.ts",
     "test": "bun test",
     "postinstall": "prisma generate",
     "db:generate": "bunx prisma generate",

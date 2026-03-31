@@ -1,0 +1,144 @@
+name: CI / Publish
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ci.yml
+      - packages/bao-boss/src/**
+      - packages/bao-boss/test/**
+      - packages/bao-boss/prisma/**
+      - packages/bao-boss/package.json
+      - bun.lock
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/ci.yml
+      - packages/bao-boss/src/**
+      - packages/bao-boss/test/**
+      - packages/bao-boss/prisma/**
+      - packages/bao-boss/package.json
+      - bun.lock
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        bun-version: [1.1.0, latest]
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: bao
+          POSTGRES_PASSWORD: bao
+          POSTGRES_DB: bao
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bao -d bao"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ matrix.bun-version }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: cd packages/bao-boss && bunx prisma generate
+
+      - name: TypeScript check
+        run: cd packages/bao-boss && bunx tsc --noEmit
+
+      - name: Lint
+        run: cd packages/bao-boss && bun run lint
+
+      - name: Run migrations
+        run: cd packages/bao-boss && bunx prisma migrate deploy
+        env:
+          DATABASE_URL: postgresql://bao:bao@localhost:5432/bao
+
+      - name: Run tests
+        run: cd packages/bao-boss && bun test
+        env:
+          DATABASE_URL: postgresql://bao:bao@localhost:5432/bao
+
+  publish:
+    needs: verify
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    concurrency:
+      group: npm-publish
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: cd packages/bao-boss && bunx prisma generate
+
+      - name: Check if version already published
+        id: check
+        working-directory: packages/bao-boss
+        run: |
+          PKG_NAME=$(jq -r '.name' package.json)
+          PKG_VERSION=$(jq -r '.version' package.json)
+          HTTP_STATUS=$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/${PKG_NAME}/${PKG_VERSION}")
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${PKG_NAME}@${PKG_VERSION} is already published — skipping."
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Require NPM_TOKEN
+        if: steps.check.outputs.already_published == 'false'
+        run: |
+          if [ -z "${{ secrets.NPM_TOKEN }}" ]; then
+            echo "::error::NPM_TOKEN secret is not set. Cannot publish."
+            exit 1
+          fi
+
+      - name: Publish to npm
+        if: steps.check.outputs.already_published == 'false'
+        working-directory: packages/bao-boss
+        run: bun publish --access public --ignore-scripts --registry https://registry.npmjs.org
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Skip publish (already published)
+        if: steps.check.outputs.already_published == 'true'
+        run: echo "Version already published — nothing to do."
