@@ -27,7 +27,6 @@
     "build": "bun build src/index.ts --outdir dist --target bun",
     "lint": "bun run scripts/lint.ts",
     "test": "bun test",
-    "postinstall": "DATABASE_URL=${DATABASE_URL:-postgresql://localhost:5432/placeholder} prisma generate",
     "db:generate": "bunx prisma generate",
     "db:migrate": "bunx prisma migrate deploy"
   },
