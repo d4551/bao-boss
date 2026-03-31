@@ -62,6 +62,7 @@ export class BaoBoss extends EventEmitter {
 
     this.manager = new Manager(this.prisma, {
       schema: this.opts.schema,
+      dlqRetentionDays: this.opts.dlqRetentionDays,
       onRetry: this.opts.onRetry
         ? (job, err) => this.opts.onRetry!(job, err)
         : undefined,

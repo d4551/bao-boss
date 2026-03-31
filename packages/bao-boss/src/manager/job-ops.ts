@@ -131,9 +131,10 @@ async function createDlqJobs(
   prisma: PrismaClient,
   dlqJobs: ExhaustedRow[],
   jobQueueMap: Map<string, string>,
+  dlqRetentionDays: number,
   onDlq?: (payload: { jobId: string; queue: string; deadLetter: string }) => void,
 ): Promise<void> {
-  const keepUntil = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+  const keepUntil = new Date(Date.now() + dlqRetentionDays * 24 * 60 * 60 * 1000)
   await prisma.job.createMany({
     data: dlqJobs.map((j) => ({
       queue: j.deadLetter!,
@@ -323,7 +324,13 @@ export class JobOps {
     const dlqJobs = exhausted.filter((j) => j.deadLetter)
     if (dlqJobs.length > 0) {
       const jobQueueMap = new Map(jobs.map(j => [j.id, j.queue]))
-      await createDlqJobs(this.prisma, dlqJobs, jobQueueMap, this.options.onDlq)
+      await createDlqJobs(
+        this.prisma,
+        dlqJobs,
+        jobQueueMap,
+        this.options.dlqRetentionDays ?? 14,
+        this.options.onDlq,
+      )
     }
   }
 
