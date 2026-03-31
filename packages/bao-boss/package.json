@@ -1,6 +1,6 @@
 {
   "name": "bao-boss",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Bun-native PostgreSQL job queue with SKIP LOCKED, retries, cron scheduling, pub/sub, dead letter queues, and an HTMX dashboard",
   "type": "module",
   "exports": {
