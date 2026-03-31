@@ -24,7 +24,7 @@ export class Scheduler {
       throw new Error(`Invalid timezone: '${tz}'`)
     }
 
-    const jsonOptions: Prisma.InputJsonValue | undefined = options ? { tz: options.tz } : undefined
+    const jsonOptions: Prisma.InputJsonValue | undefined = tz !== 'UTC' ? { tz } : undefined
 
     await this.prisma.schedule.upsert({
       where: { name },

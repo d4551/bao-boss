@@ -214,16 +214,16 @@ export async function jobDetail(
           ${job.state === 'failed' || job.state === 'cancelled' ? `
           <button class="btn btn-primary mr-2" type="button"
             aria-label="${t('aria.retryThis', locale)}"
-            hx-post="${prefix}/jobs/${job.id}/retry"
+            hx-post="${prefix}/jobs/${job.id}/retry?ctx=detail"
             hx-confirm="${t('confirm.retryThis', locale)}"
-            hx-swap="innerHTML" hx-target="body">${t('btn.retry', locale)}</button>
+            hx-swap="innerHTML" hx-target="closest .card-actions">${t('btn.retry', locale)}</button>
         ` : ''}
         ${job.state !== 'completed' && job.state !== 'cancelled' ? `
           <button class="btn btn-error" type="button"
             aria-label="${t('aria.cancelThis', locale)}"
-            hx-delete="${prefix}/jobs/${job.id}"
+            hx-delete="${prefix}/jobs/${job.id}?ctx=detail"
             hx-confirm="${t('confirm.cancelThis', locale)}"
-            hx-swap="innerHTML" hx-target="body">${t('btn.cancel', locale)}</button>
+            hx-swap="innerHTML" hx-target="closest .card-actions">${t('btn.cancel', locale)}</button>
         ` : ''}
       </div>
     </div>
@@ -235,8 +235,12 @@ export async function retryJob(
   boss: BaoBoss,
   locale: string,
   id: string,
+  context: 'list' | 'detail' = 'list',
 ): Promise<Response> {
   await boss.resume(id)
+  if (context === 'detail') {
+    return fragmentResponse(`<span class="badge badge-success">${t('msg.jobQueuedRetry', locale)}</span>`)
+  }
   return fragmentResponse(`<tr><td colspan="5" class="text-success">${t('msg.jobQueuedRetry', locale)}</td></tr>`)
 }
 
@@ -244,8 +248,12 @@ export async function cancelJob(
   boss: BaoBoss,
   locale: string,
   id: string,
+  context: 'list' | 'detail' = 'list',
 ): Promise<Response> {
   await boss.cancel(id)
+  if (context === 'detail') {
+    return fragmentResponse(`<span class="badge badge-ghost">${t('msg.jobCancelled', locale)}</span>`)
+  }
   return fragmentResponse(`<tr><td colspan="5" class="text-base-content/70">${t('msg.jobCancelled', locale)}</td></tr>`)
 }
 
