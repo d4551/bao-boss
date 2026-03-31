@@ -4,10 +4,7 @@ import type { Queue, CreateQueueOptions, JobState } from '../types.js'
 import { createQueueSchema, toDomainQueue, toJsonValue } from './mappers.js'
 
 export class QueueOps {
-  constructor(
-    private readonly prisma: PrismaClient,
-    private readonly schema: string,
-  ) {}
+  constructor(private readonly prisma: PrismaClient) {}
 
   async createQueue(name: string, options: CreateQueueOptions = {}): Promise<Queue> {
     const opts = Value.Decode(createQueueSchema, options)

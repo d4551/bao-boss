@@ -106,9 +106,10 @@ function matchesPart(part: string, value: number): boolean {
   if (part.includes('/')) {
     const [base, stepStr] = part.split('/')
     const step = parseInt(stepStr ?? '1', 10)
+    // Non-* step bases are validated but ignored for matching — legacy behavior
+    // from pre–cron.ts Maintenance so stored N/M schedules keep the same fire times.
     if (base === '*') return value % step === 0
-    const baseNum = parseInt(base!, 10)
-    return value >= baseNum && (value - baseNum) % step === 0
+    return value % step === 0
   }
   if (part.includes(',')) {
     return part.split(',').some(p => parseInt(p, 10) === value)

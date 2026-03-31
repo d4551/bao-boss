@@ -21,7 +21,7 @@ export class Manager {
   ) {
     const { schema, ...opts } = options
     const validatedSchema = validateSchema(schema ?? 'baoboss')
-    this.queueOps = new QueueOps(prisma, validatedSchema)
+    this.queueOps = new QueueOps(prisma)
     this.jobOps = new JobOps(prisma, validatedSchema, opts)
     this.jobQueries = new JobQueries(prisma)
     this.pubsubOps = new PubSubOps(prisma)
