@@ -1,0 +1,54 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] - 2026-03-31
+
+### Added
+
+- **Core job queue** with PostgreSQL `SKIP LOCKED` for concurrent job fetching
+- **Queue management**: `createQueue`, `updateQueue`, `deleteQueue`, `purgeQueue`, `getQueue`, `getQueues`, `pauseQueue`, `resumeQueue`
+- **Job operations**: `send`, `insert`, `fetch`, `complete`, `fail`, `cancel`, `resume`, `getJobById`, `getJobsById`, `progress`
+- **Job search/filter API**: `searchJobs` with pagination, state filtering, and sorting
+- **Bulk operations**: `cancelJobs`, `resumeJobs` for queue-wide operations
+- **Job dependency graph**: `getJobDependencies` returns upstream and downstream jobs
+- **Workers**: `work` (polling worker with batch processing), `offWork` (stop workers)
+- **Worker options**: `batchSize`, `pollingIntervalSeconds`, `maxConcurrency`, `handlerTimeoutSeconds`
+- **Queue policies**: `standard`, `short`, `singleton`, `stately` concurrency modes
+- **Automatic retries** with configurable limits, delays, exponential backoff, and jitter
+- **Dead letter queues** with configurable `dlqRetentionDays`
+- **Rate limiting** per queue with `rateLimit: { count, period }`
+- **Debouncing** per queue with configurable window
+- **Fairness ordering** with `lowPriorityShare` for low-priority job scheduling
+- **Cron scheduling**: `schedule`, `unschedule`, `getSchedules` with timezone support
+- **Cron utilities**: `validateCron` (throws on invalid), `describeCron` (human-readable)
+- **Cron aliases**: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`
+- **Pub/Sub fan-out**: `publish`, `subscribe`, `unsubscribe`
+- **HTMX Dashboard** with Elysia plugin: queue list, job detail, schedule management, live progress
+- **Dashboard auth**: Bearer token and Better Auth session support
+- **Dashboard CSRF protection** with httpOnly cookie + header verification
+- **Dashboard rate limiting** per IP
+- **Dashboard i18n** with `t()` message keys and locale-aware date formatting
+- **Dashboard ARIA** accessibility: scope, aria-label, type attributes throughout
+- **Prometheus metrics** endpoint with per-queue counters
+- **Per-queue metrics**: `baoboss_jobs_processed_per_queue`, `baoboss_jobs_failed_per_queue`, `baoboss_processing_duration_per_queue_seconds`
+- **Events**: `error`, `stopped`, `progress`, `dlq`, `queue:paused`, `queue:resumed`
+- **Lifecycle hooks**: `onBeforeFetch`, `onAfterComplete`, `onRetry`
+- **CLI**: `bao migrate`, `bao queues`, `bao purge`, `bao retry`, `bao schedule:ls`, `bao schedule:rm`
+- **Prisma 7** with PrismaPg adapter for schema management and migrations
+- **Multi-tenant schema** support via configurable `schema` option
+- **Graceful shutdown** with configurable grace period for worker drain
+- **Project lint** (`bun run lint`) checking typecasts, i18n, ARIA, HTMX, DRY, file/function length
+
+### Architecture
+
+- **Decomposed Manager**: thin facade delegating to `manager/` submodules (queue-ops, job-ops, job-queries, pubsub, mappers)
+- **Decomposed Dashboard**: route wiring only; handlers, middleware, HTML helpers, SSE in `dashboard/` submodules
+- **Centralized schema validation** in `schema.ts`
+- **Extracted cron module** in `cron.ts` (parser, validator, describer)
+- **Zero `as unknown`/`as never`/`as any`** typecasts — uses typed domain mappers
+- **All files under 350 lines**, all functions under 60 lines
+- **18 test files** with 129 tests across all features

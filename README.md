@@ -192,6 +192,8 @@ Elysia is only needed if you use the HTMX dashboard:
 bun add elysia  # optional — only for dashboard
 ```
 
+> **Note:** bao-boss ships TypeScript source and requires Bun >= 1.1. It does not support Node.js.
+
 ---
 
 ## API Reference
@@ -214,6 +216,7 @@ Creates a new BaoBoss instance.
 | `onBeforeFetch` | `(queue) => Promise<void>` | — | Hook called before each fetch |
 | `onAfterComplete` | `(jobs) => Promise<void>` | — | Hook called after jobs complete |
 | `onRetry` | `(job, error) => Promise<void>` | — | Hook called before retrying a failed job |
+| `dlqRetentionDays` | `number` | `14` | Days to keep DLQ and debounce-flushed jobs |
 
 ### `boss.start()`
 
@@ -365,6 +368,41 @@ Updates job progress (0–100). Emits `progress` event.
 
 Pause or resume a queue. Paused queues do not fetch jobs.
 
+#### `boss.searchJobs<T>(filter?)` → `{ jobs: Job<T>[], total: number }`
+
+Search and filter jobs with pagination.
+
+```typescript
+const result = await boss.searchJobs({
+  queue: 'emails',
+  state: ['failed', 'cancelled'],
+  limit: 20,
+  offset: 0,
+  sortBy: 'createdOn',
+  sortOrder: 'desc',
+})
+```
+
+#### `boss.cancelJobs(queue, filter?)` → `number`
+
+Bulk cancel jobs in a queue. Returns count of cancelled jobs.
+
+```typescript
+const count = await boss.cancelJobs('emails', { state: 'created' })
+```
+
+#### `boss.resumeJobs(queue, filter?)` → `number`
+
+Bulk resume failed/cancelled jobs. Returns count.
+
+```typescript
+const count = await boss.resumeJobs('emails', { state: 'failed' })
+```
+
+#### `boss.getJobDependencies<T>(jobId)` → `{ dependsOn: Job<T>[], dependedBy: Job<T>[] }`
+
+Query upstream and downstream job dependencies.
+
 #### `boss.getDLQDepth(deadLetterQueueName)` → `number`
 
 Returns the count of jobs in a dead letter queue.
@@ -397,8 +435,6 @@ const workerId = await boss.work<EmailPayload>(
 |--------|------|---------|-------------|
 | `batchSize` | `number` | `1` | Jobs fetched per poll cycle |
 | `pollingIntervalSeconds` | `number` | `2` | Seconds between polls |
-| `includeMetadata` | `boolean` | `false` | Include full job metadata |
-| `priority` | `boolean` | `true` | Honour priority ordering |
 | `maxConcurrency` | `number` | `Infinity` | Max concurrent handler invocations |
 | `handlerTimeoutSeconds` | `number` | — | Timeout per handler; job fails if exceeded |
 
@@ -433,6 +469,20 @@ Removes a cron schedule.
 #### `boss.getSchedules()` → `Schedule[]`
 
 Lists all cron schedules.
+
+#### Cron Utilities
+
+```typescript
+import { validateCron, describeCron } from 'bao-boss'
+
+validateCron('0 9 * * 1-5')  // passes (weekdays at 9am)
+validateCron('60 * * * *')   // throws Error('Invalid cron field...')
+
+describeCron('0 9 * * 1-5')  // "at minute 0, at hour 9, on day-of-week 1-5"
+describeCron('@daily')        // "Once a day (at midnight)"
+```
+
+Supported cron aliases: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`
 
 ---
 
@@ -492,8 +542,20 @@ const app = new Elysia()
 | `GET` | `/boss/schedules` | Cron schedule list |
 | `DELETE` | `/boss/schedules/:name` | Remove a schedule |
 | `GET` | `/boss/stats` | Aggregate stats fragment (queues, total, active, completed, failed) |
-| `GET` | `/boss/metrics` | Prometheus-format metrics (queue depths, job counts) |
+| `GET` | `/boss/metrics` | Prometheus-format metrics (queue depths, per-queue counters) |
 | `GET` | `/boss/sse/progress/:id` | SSE stream for live job progress updates |
+
+Prometheus metrics now include per-queue counters:
+
+```
+baoboss_jobs_processed_total 42
+baoboss_jobs_failed_total 3
+baoboss_processing_duration_seconds 12.5
+baoboss_queue_depth{queue="emails"} 15
+baoboss_jobs_processed_per_queue{queue="emails"} 30
+baoboss_jobs_failed_per_queue{queue="emails"} 2
+baoboss_processing_duration_per_queue_seconds{queue="emails"} 8.3
+```
 
 **Dashboard auth options:** Use `auth` for a static Bearer token, or `dashboardAuth` for Bearer or Better Auth session-based auth. When `dashboardAuth` is set, it overrides `auth`.
 
@@ -532,6 +594,8 @@ bao schedule:rm <name>   # Remove a cron schedule
 | `stopped` | — | Emitted when `stop()` resolves |
 | `progress` | `{ id, queue, progress }` | Job progress updated via `boss.progress()` |
 | `dlq` | `{ jobId, queue, deadLetter }` | Job moved to dead letter queue |
+| `queue:paused` | `{ queue }` | Queue was paused |
+| `queue:resumed` | `{ queue }` | Queue was resumed |
 
 ```typescript
 boss.on('error', (err) => console.error('BaoBoss error:', err))
@@ -574,33 +638,42 @@ The background maintenance supervisor runs on `maintenanceIntervalSeconds` and p
 ```
 bao-boss/
 ├── packages/
-│   └── bao-boss/               # Core library (publishable npm package)
+│   └── bao-boss/
 │       ├── src/
-│       │   ├── index.ts        # Public API exports
-│       │   ├── BaoBoss.ts      # Main class (lifecycle, EventEmitter)
-│       │   ├── EventEmitter.ts # Minimal EventEmitter (no Node dependency)
-│       │   ├── Manager.ts      # Queue & job CRUD, SKIP LOCKED fetch
-│       │   ├── Worker.ts       # Polling worker implementation
-│       │   ├── Scheduler.ts    # Cron schedule management
-│       │   ├── Maintenance.ts  # Expiry, archival, purge, cron firing
-│       │   ├── Dashboard.ts    # Elysia plugin with HTMX routes
-│       │   ├── Migrate.ts      # Prisma migration runner
-│       │   ├── Metrics.ts      # Prometheus metrics
-│       │   ├── i18n.ts         # Dashboard message keys
-│       │   ├── cli.ts          # CLI binary
-│       │   └── types.ts        # TypeScript type definitions
+│       │   ├── index.ts         # Public API exports
+│       │   ├── BaoBoss.ts       # Main class (lifecycle, EventEmitter)
+│       │   ├── EventEmitter.ts  # Minimal EventEmitter (no Node dependency)
+│       │   ├── Manager.ts       # Facade delegating to manager/ modules
+│       │   ├── Worker.ts        # Polling worker implementation
+│       │   ├── Scheduler.ts     # Cron schedule management (with validation)
+│       │   ├── Maintenance.ts   # Expiry, archival, purge, cron firing
+│       │   ├── Dashboard.ts     # Elysia plugin (route wiring)
+│       │   ├── Migrate.ts       # Prisma migration runner
+│       │   ├── Metrics.ts       # Per-queue Prometheus metrics
+│       │   ├── i18n.ts          # Dashboard i18n message keys
+│       │   ├── cli.ts           # CLI binary (bao command)
+│       │   ├── cron.ts          # Cron parser, validator, describer
+│       │   ├── schema.ts        # Schema name validation (shared)
+│       │   ├── types.ts         # TypeScript type definitions
+│       │   ├── manager/         # Decomposed Manager modules
+│       │   │   ├── mappers.ts   # Prisma-to-domain type mappers
+│       │   │   ├── queue-ops.ts # Queue CRUD operations
+│       │   │   ├── job-ops.ts   # Job mutations (send, fetch, fail)
+│       │   │   ├── job-queries.ts # Job queries (search, deps, getById)
+│       │   │   └── pubsub.ts    # Pub/Sub operations
+│       │   └── dashboard/       # Decomposed Dashboard modules
+│       │       ├── routes.ts    # Route handler functions
+│       │       ├── sse.ts       # SSE progress streaming
+│       │       ├── html.ts      # HTML rendering helpers
+│       │       ├── middleware.ts # Auth, CSRF, rate limiting
+│       │       └── response.ts  # Response builders
+│       ├── scripts/
+│       │   └── lint.ts          # Project-specific lint
 │       ├── prisma/
 │       │   ├── schema.prisma   # Prisma schema (baoboss namespace)
 │       │   └── migrations/     # Prisma migrations
 │       ├── sql/                # Raw SKIP LOCKED queries
-│       │   ├── fetch_jobs.sql
-│       │   ├── complete_jobs.sql
-│       │   └── fail_jobs.sql
-│       └── test/               # Bun test suite
-│           ├── manager.test.ts
-│           ├── worker.test.ts
-│           ├── schedule.test.ts
-│           └── dashboard.test.ts
+│       └── test/               # 18 test files, 129 tests
 ├── apps/
 │   └── example/                # Example Elysia app with dashboard
 ├── docker-compose.yaml         # PostgreSQL 17 for local dev

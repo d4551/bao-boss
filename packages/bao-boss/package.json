@@ -16,6 +16,7 @@
     "src",
     "prisma",
     "sql",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "engines": {
