@@ -10,7 +10,7 @@ bao-boss is a **Bun-native job queue library** built on PostgreSQL, inspired by 
 
 | Layer | Technology | Role |
 |-------|-----------|------|
-| Runtime | Bun >= 1.1 | Native APIs, test runner, package manager |
+| Runtime | Bun >= 1.2 | Native APIs, test runner, package manager |
 | HTTP | Elysia | Dashboard plugin with type-safe routes |
 | ORM | Prisma 7 + PrismaPg adapter | Schema, migrations, raw SQL for SKIP LOCKED |
 | Dashboard | htmx 2 + daisyUI 5 | Server-rendered HTML, i18n, ARIA |
@@ -57,7 +57,7 @@ bao-boss/
 │   │   ├── schema.prisma     # Prisma schema (baoboss namespace)
 │   │   └── migrations/       # Prisma migrations
 │   ├── sql/                  # Raw SKIP LOCKED query files
-│   └── test/                 # 18 test files, 129 tests
+│   └── test/                 # 18 test files, 96 tests
 ├── apps/example/             # Example Elysia app with dashboard
 ├── docker-compose.yaml       # PostgreSQL 17 for local dev
 └── package.json              # Bun workspace root
@@ -95,8 +95,8 @@ bao-boss/
 ```bash
 docker compose up -d                    # Start PostgreSQL
 bun install                             # Install dependencies
-cd packages/bao-boss && bunx prisma generate  # Generate Prisma client
-bunx prisma migrate deploy              # Run migrations
+cd packages/bao-boss && DATABASE_URL=postgresql://bao:bao@localhost:5432/bao bunx prisma generate  # Generate Prisma client
+DATABASE_URL=postgresql://bao:bao@localhost:5432/bao bunx prisma migrate deploy  # Run migrations
 DATABASE_URL=postgresql://bao:bao@localhost:5432/bao bun test  # Run tests
 cd apps/example && bun run dev          # Run example app
 cd packages/bao-boss && bun run lint    # Run project lint

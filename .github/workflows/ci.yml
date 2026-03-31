@@ -1,5 +1,8 @@
 name: CI / Publish
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   push:
     branches: [main]
@@ -29,7 +32,7 @@ jobs:
 
     strategy:
       matrix:
-        bun-version: [1.1.0, latest]
+        bun-version: [1.2.0, latest]
 
     services:
       postgres:
@@ -48,7 +51,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
@@ -57,9 +60,13 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+        env:
+          DATABASE_URL: postgresql://bao:bao@localhost:5432/bao
 
       - name: Generate Prisma client
         run: cd packages/bao-boss && bunx prisma generate
+        env:
+          DATABASE_URL: postgresql://bao:bao@localhost:5432/bao
 
       - name: TypeScript check
         run: cd packages/bao-boss && bunx tsc --noEmit
@@ -91,7 +98,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
@@ -99,16 +106,20 @@ jobs:
           bun-version: latest
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: lts/*
+          node-version: 24
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+        env:
+          DATABASE_URL: placeholder://not-used-at-generate-time
 
       - name: Generate Prisma client
         run: cd packages/bao-boss && bunx prisma generate
+        env:
+          DATABASE_URL: placeholder://not-used-at-generate-time
 
       - name: Check if version already published
         id: check

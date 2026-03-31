@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/d4551/bao-boss/actions/workflows/ci.yml/badge.svg)](https://github.com/d4551/bao-boss/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/d4551/bao-boss)](https://github.com/d4551/bao-boss)
-[![Bun](https://img.shields.io/badge/bun-%3E%3D1.1-black?logo=bun)](https://bun.sh)
+[![Bun](https://img.shields.io/badge/bun-%3E%3D1.2-black?logo=bun)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/typescript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 
 A Bun-native job queue library built on PostgreSQL.
@@ -36,7 +36,7 @@ bun add bao-boss @prisma/client prisma
 bun add elysia  # optional, only needed for the dashboard
 ```
 
-Requires Bun >= 1.1 and PostgreSQL 15+.
+Requires Bun >= 1.2 and PostgreSQL 15+.
 
 ## Quick Start
 

@@ -51,4 +51,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Extracted cron module** in `cron.ts` (parser, validator, describer)
 - **Zero `as unknown`/`as never`/`as any`** typecasts — uses typed domain mappers
 - **All files under 350 lines**, all functions under 60 lines
-- **18 test files** with 129 tests across all features
+- **18 test files** with 96 tests across all features
