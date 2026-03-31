@@ -31,6 +31,7 @@ jobs:
     runs-on: ubuntu-latest
 
     strategy:
+      fail-fast: false
       matrix:
         bun-version: [1.2.0, latest]
 
@@ -86,7 +87,7 @@ jobs:
 
   publish:
     needs: verify
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     permissions:
@@ -112,14 +113,14 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
         env:
-          DATABASE_URL: placeholder://not-used-at-generate-time
+          DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
 
       - name: Generate Prisma client
         run: cd packages/bao-boss && bunx prisma generate
         env:
-          DATABASE_URL: placeholder://not-used-at-generate-time
+          DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
 
       - name: Check if version already published
         id: check
