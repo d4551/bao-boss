@@ -21,6 +21,9 @@ interface Finding {
 const findings: Finding[] = []
 const SRC = 'src'
 
+/** Words that match `name(args) {` but are not function declarations */
+const NOT_FUNCTION_DECL_PREFIX = new Set(['if', 'for', 'while', 'switch', 'catch'])
+
 function addFinding(file: string, line: number, rule: string, message: string, severity: 'error' | 'warn' = 'error') {
   findings.push({ file, line, rule, message, severity })
 }
@@ -216,9 +219,12 @@ for (const file of files) {
     const fnMatch = line.match(/(?:async\s+)?(?:function\s+(\w+)|(\w+)\s*(?:<[^>]*>)?\s*\([^)]*\)\s*(?::\s*[^{]+)?\s*\{)/)
     if (fnMatch && !inFn) {
       fnName = fnMatch[1] ?? fnMatch[2] ?? 'anonymous'
-      fnStart = lineNum
-      inFn = true
-      braceDepth = 0
+      const looksLikeKwControl = fnMatch[2] !== undefined && NOT_FUNCTION_DECL_PREFIX.has(fnName)
+      if (!looksLikeKwControl) {
+        fnStart = lineNum
+        inFn = true
+        braceDepth = 0
+      }
     }
     if (inFn) {
       for (const ch of line) {
