@@ -20,14 +20,14 @@
     "LICENSE"
   ],
   "engines": {
-    "bun": ">=1.1"
+    "bun": ">=1.2"
   },
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "build": "bun build src/index.ts --outdir dist --target bun",
     "lint": "bun run scripts/lint.ts",
     "test": "bun test",
-    "postinstall": "prisma generate",
+    "postinstall": "DATABASE_URL=${DATABASE_URL:-postgresql://localhost:5432/placeholder} prisma generate",
     "db:generate": "bunx prisma generate",
     "db:migrate": "bunx prisma migrate deploy"
   },
