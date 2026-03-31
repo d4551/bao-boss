@@ -86,7 +86,7 @@ function buildFetchQuery(
 ): { query: string; params: (string | number)[] } {
   const orderByClause =
     fairness > 0
-      ? '(CASE WHEN random() < $2 THEN random() ELSE 1 END) ASC, j.priority DESC, j."createdOn" ASC'
+      ? '(CASE WHEN random() < $2 THEN 0 ELSE 1 END) ASC, j.priority DESC, j."createdOn" ASC'
       : 'j.priority DESC, j."createdOn" ASC'
   const limitParam = fairness > 0 ? 3 : 2
   const query = `
