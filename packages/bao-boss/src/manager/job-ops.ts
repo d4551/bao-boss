@@ -61,12 +61,12 @@ async function checkQueuePolicy(
   return null
 }
 
-async function checkRateLimit(
+async function getRateLimitRemaining(
   prisma: PrismaClient,
   queue: string,
   rateLimit: { count: number; period: number } | null,
-): Promise<boolean> {
-  if (!rateLimit || rateLimit.count <= 0 || rateLimit.period <= 0) return false
+): Promise<number | null> {
+  if (!rateLimit || rateLimit.count <= 0 || rateLimit.period <= 0) return null
   const since = new Date(Date.now() - rateLimit.period * 1000)
   const startedCount = await prisma.job.count({
     where: {
@@ -75,7 +75,8 @@ async function checkRateLimit(
       startedOn: { gte: since },
     },
   })
-  return startedCount >= rateLimit.count
+  const remaining = rateLimit.count - startedCount
+  return remaining > 0 ? remaining : 0
 }
 
 function buildFetchQuery(
@@ -85,7 +86,7 @@ function buildFetchQuery(
 ): { query: string; params: (string | number)[] } {
   const orderByClause =
     fairness > 0
-      ? '(CASE WHEN random() < $2 THEN 0 ELSE 1 END) ASC, j.priority DESC, j."createdOn" ASC'
+      ? '(CASE WHEN random() < $2 THEN random() ELSE 1 END) ASC, j.priority DESC, j."createdOn" ASC'
       : 'j.priority DESC, j."createdOn" ASC'
   const limitParam = fairness > 0 ? 3 : 2
   const query = `
@@ -105,12 +106,14 @@ function buildFetchQuery(
       ORDER BY ${orderByClause}
       LIMIT $${limitParam}
       FOR UPDATE SKIP LOCKED
+    ), updated AS (
+      UPDATE "${schema}".job j
+      SET state = 'active', "startedOn" = now()
+      FROM next_jobs
+      WHERE j.id = next_jobs.id
+      RETURNING j.*
     )
-    UPDATE "${schema}".job j
-    SET state = 'active', "startedOn" = now()
-    FROM next_jobs
-    WHERE j.id = next_jobs.id
-    RETURNING j.*
+    SELECT * FROM updated ORDER BY priority DESC, "createdOn" ASC
   `
   const params: (string | number)[] = fairness > 0
     ? ['', fairness, effectiveBatch]
@@ -247,7 +250,8 @@ export class JobOps {
     if (!queueRow) return []
 
     const rateLimit = queueRow.rateLimit as { count: number; period: number } | null
-    if (await checkRateLimit(this.prisma, queue, rateLimit)) return []
+    const rateLimitRemaining = await getRateLimitRemaining(this.prisma, queue, rateLimit)
+    if (rateLimitRemaining === 0) return []
 
     if (queueRow.policy === 'singleton' || queueRow.policy === 'stately') {
       const activeCount = await this.prisma.job.count({
@@ -258,9 +262,12 @@ export class JobOps {
 
     if (queueRow.paused) return []
 
-    const effectiveBatch = queueRow.policy === 'singleton' || queueRow.policy === 'stately'
+    let effectiveBatch = queueRow.policy === 'singleton' || queueRow.policy === 'stately'
       ? 1
       : batchSize
+    if (rateLimitRemaining != null && rateLimitRemaining < effectiveBatch) {
+      effectiveBatch = rateLimitRemaining
+    }
     const fairness = (queueRow.fairness as { lowPriorityShare?: number } | null)?.lowPriorityShare ?? 0
     const { query, params } = buildFetchQuery(this.schema, fairness, effectiveBatch)
     params[0] = queue
