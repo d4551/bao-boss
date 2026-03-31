@@ -88,11 +88,11 @@ export class Manager {
   }
 
   cancel(id: string | string[]): Promise<void> {
-    return this.jobOps.cancel(id)
+    return this.jobQueries.cancel(id)
   }
 
   resume(id: string | string[]): Promise<void> {
-    return this.jobOps.resume(id)
+    return this.jobQueries.resume(id)
   }
 
   cancelJobs(queue: string, filter?: { state?: 'created' | 'active' }): Promise<number> {

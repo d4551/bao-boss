@@ -84,6 +84,22 @@ export class JobQueries {
     })
   }
 
+  async cancel(id: string | string[]): Promise<void> {
+    const ids = Array.isArray(id) ? id : [id]
+    await this.prisma.job.updateMany({
+      where: { id: { in: ids }, state: { in: ['created', 'active'] } },
+      data: { state: 'cancelled' },
+    })
+  }
+
+  async resume(id: string | string[]): Promise<void> {
+    const ids = Array.isArray(id) ? id : [id]
+    await this.prisma.job.updateMany({
+      where: { id: { in: ids }, state: { in: ['cancelled', 'failed'] } },
+      data: { state: 'created', retryCount: 0 },
+    })
+  }
+
   async cancelJobs(queue: string, filter?: { state?: 'created' | 'active' }): Promise<number> {
     const result = await this.prisma.job.updateMany({
       where: {
