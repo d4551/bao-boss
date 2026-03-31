@@ -174,14 +174,20 @@ export function describeCron(cron: string): string {
   if (month !== '*') {
     const months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     const monthNum = parseInt(month, 10)
-    segments.push(`in ${months[monthNum] ?? `month ${month}`}`)
+    const monthIsPlainInteger = !isNaN(monthNum) && String(monthNum) === month
+    segments.push(
+      monthIsPlainInteger && months[monthNum]
+        ? `in ${months[monthNum]!}`
+        : `in month ${month}`,
+    )
   }
 
   // Day of week
   if (dow !== '*') {
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
     const dayNum = parseInt(dow, 10)
-    if (!isNaN(dayNum) && days[dayNum]) segments.push(`on ${days[dayNum]}`)
+    const dowIsPlainInteger = !isNaN(dayNum) && String(dayNum) === dow
+    if (dowIsPlainInteger && days[dayNum]) segments.push(`on ${days[dayNum]}`)
     else segments.push(`on day-of-week ${dow}`)
   }
 
