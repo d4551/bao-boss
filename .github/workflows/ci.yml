@@ -147,7 +147,14 @@ jobs:
       - name: Publish to npm
         if: steps.check.outputs.already_published == 'false'
         working-directory: packages/bao-boss
-        run: npm publish --access public --ignore-scripts
+        run: |
+          PKG_VERSION=$(jq -r '.version' package.json)
+          TAG_FLAG=""
+          if echo "$PKG_VERSION" | grep -qE '[-]'; then
+            PRE_TAG=$(echo "$PKG_VERSION" | sed 's/.*-\([a-zA-Z]*\).*/\1/')
+            TAG_FLAG="--tag ${PRE_TAG:-next}"
+          fi
+          npm publish --access public --ignore-scripts $TAG_FLAG
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
