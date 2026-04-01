@@ -133,12 +133,11 @@ export class QueueOps {
       if (current === queueName) {
         throw new Error(`Circular dead letter reference involving queue '${queueName}'`)
       }
-      if (visited.has(current)) break
+      if (visited.has(current) || visited.size >= 32) break
       visited.add(current)
       const next = await this.prisma.queue.findUnique({ where: { name: current } })
       if (!next) break
       current = next.deadLetter
-      if (visited.size > 32) break
     }
   }
 }

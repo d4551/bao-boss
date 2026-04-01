@@ -104,10 +104,12 @@ export class Maintenance {
     for (const job of expired) {
       if (job.dead_letter) {
         try {
+          const targetQueue = await this.prisma.queue.findUnique({ where: { name: job.dead_letter } })
           await this.prisma.job.create({
             data: {
               queue: job.dead_letter,
               data: job.data ?? Prisma.JsonNull,
+              deadLetter: targetQueue?.deadLetter ?? null,
               policy: 'standard',
               keepUntil: new Date(Date.now() + this.opts.dlqRetentionDays * 24 * 60 * 60 * 1000),
             },

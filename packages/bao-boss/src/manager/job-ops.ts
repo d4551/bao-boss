@@ -167,7 +167,13 @@ export class JobOps {
   private assertPayloadWithinLimit(data: unknown): void {
     const maxBytes = this.options.maxPayloadBytes
     if (!maxBytes || data === undefined) return
-    const size = textEncoder.encode(JSON.stringify(data)).byteLength
+    let json: string
+    try {
+      json = JSON.stringify(data)
+    } catch {
+      throw new Error('Job payload cannot be serialized to JSON (circular reference or invalid type)')
+    }
+    const size = textEncoder.encode(json).byteLength
     if (size > maxBytes) {
       throw new Error(`Job payload size ${size} bytes exceeds maximum of ${maxBytes} bytes`)
     }
