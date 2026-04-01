@@ -81,6 +81,15 @@ const messages: Record<string, Record<string, string>> = {
     'msg.jobAlreadyFinished': 'Job already finished',
     'title.dashboard': 'bao-boss Dashboard',
     'unit.seconds': 's',
+    'field.search': 'Search queues…',
+    'aria.searchQueues': 'Search queues by name',
+    'btn.selectAll': 'Select all',
+    'btn.bulkRetry': 'Retry selected',
+    'btn.bulkCancel': 'Cancel selected',
+    'aria.selectJob': 'Select job',
+    'aria.bulkActions': 'Bulk job actions',
+    'msg.bulkRetryDone': 'Selected jobs queued for retry',
+    'msg.bulkCancelDone': 'Selected jobs cancelled',
   },
 }
 

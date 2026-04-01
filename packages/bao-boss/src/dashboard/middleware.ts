@@ -6,7 +6,8 @@ const CSRF_HEADER = 'x-csrf-token'
 
 export { CSRF_COOKIE, CSRF_HEADER }
 
-type ElysiaSet = { status?: number | string }
+type ElysiaHeaders = Record<string, string | number | undefined>
+type ElysiaSet = { status?: number | string; headers?: ElysiaHeaders }
 
 export function createAuthMiddleware(
   dashboardAuth: { type: 'better-auth'; auth: BetterAuthSessionApi } | { type: 'bearer'; token: string },
@@ -61,18 +62,25 @@ export function createRateLimitMiddleware(
       }
       lastCleanup = now
     }
-    const entry = rateLimitMap.get(ip)
-    if (entry) {
-      if (now > entry.resetAt) {
-        rateLimitMap.set(ip, { count: 1, resetAt: now + rateLimitOpts.windowMs })
-      } else if (entry.count >= rateLimitOpts.max) {
-        set.status = 429
-        return t('msg.tooManyRequests', locale)
-      } else {
-        entry.count++
-      }
+    let entry = rateLimitMap.get(ip)
+    if (entry && now > entry.resetAt) {
+      rateLimitMap.set(ip, { count: 1, resetAt: now + rateLimitOpts.windowMs })
+      entry = rateLimitMap.get(ip)!
+    } else if (entry) {
+      entry.count++
     } else {
       rateLimitMap.set(ip, { count: 1, resetAt: now + rateLimitOpts.windowMs })
+      entry = rateLimitMap.get(ip)!
+    }
+
+    if (!set.headers) set.headers = {}
+    set.headers['X-RateLimit-Limit'] = String(rateLimitOpts.max)
+    set.headers['X-RateLimit-Remaining'] = String(Math.max(0, rateLimitOpts.max - entry.count))
+    set.headers['X-RateLimit-Reset'] = String(Math.ceil(entry.resetAt / 1000))
+
+    if (entry.count > rateLimitOpts.max) {
+      set.status = 429
+      return t('msg.tooManyRequests', locale)
     }
   }
 }

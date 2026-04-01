@@ -8,6 +8,9 @@ export class QueueOps {
 
   async createQueue(name: string, options: CreateQueueOptions = {}): Promise<Queue> {
     const opts = Value.Decode(createQueueSchema, options)
+    if (opts.deadLetter) {
+      await this.validateDeadLetter(opts.deadLetter, name)
+    }
     const policyValue: Policy = (opts.policy ?? 'standard') as Policy
     const q = await this.prisma.queue.upsert({
       where: { name },
@@ -43,6 +46,9 @@ export class QueueOps {
   }
 
   async updateQueue(name: string, options: Partial<CreateQueueOptions>): Promise<Queue> {
+    if (options.deadLetter) {
+      await this.validateDeadLetter(options.deadLetter, name)
+    }
     const data: Prisma.QueueUpdateInput = {}
     if (options.policy !== undefined) data.policy = options.policy as Policy
     if (options.retryLimit !== undefined) data.retryLimit = options.retryLimit
@@ -107,5 +113,18 @@ export class QueueOps {
     return this.prisma.job.count({
       where: { queue, state: { in: states } },
     })
+  }
+
+  private async validateDeadLetter(deadLetter: string, queueName: string): Promise<void> {
+    if (deadLetter === queueName) {
+      throw new Error(`Queue '${queueName}' cannot use itself as its dead letter queue`)
+    }
+    const dlq = await this.prisma.queue.findUnique({ where: { name: deadLetter } })
+    if (!dlq) {
+      throw new Error(`Dead letter queue '${deadLetter}' does not exist`)
+    }
+    if (dlq.deadLetter === queueName) {
+      throw new Error(`Circular dead letter reference: '${queueName}' -> '${deadLetter}' -> '${queueName}'`)
+    }
   }
 }

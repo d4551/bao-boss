@@ -127,4 +127,5 @@ export interface BaoBossOptions {
   onAfterComplete?: (jobs: Job[]) => Promise<void>
   onRetry?: (job: Job, error: Error) => Promise<void>
   dlqRetentionDays?: number
+  maxPayloadBytes?: number
 }

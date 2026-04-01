@@ -151,6 +151,7 @@ export function toJsonValue(value: unknown): Prisma.InputJsonValue {
 
 export interface ManagerOptions {
   dlqRetentionDays?: number
+  maxPayloadBytes?: number
   onRetry?: (job: Job<unknown>, error: Error) => Promise<void>
   onDlq?: (payload: { jobId: string; queue: string; deadLetter: string }) => void
 }
