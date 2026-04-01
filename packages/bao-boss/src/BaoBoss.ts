@@ -38,6 +38,7 @@ export class BaoBoss extends EventEmitter {
       dlqRetentionDays: options.dlqRetentionDays ?? 14,
       noSupervisor: options.noSupervisor ?? false,
       shutdownGracePeriodSeconds: options.shutdownGracePeriodSeconds ?? 30,
+      maxPayloadBytes: options.maxPayloadBytes,
       connectionPool: options.connectionPool,
       onBeforeFetch: options.onBeforeFetch,
       onAfterComplete: options.onAfterComplete,
@@ -63,6 +64,7 @@ export class BaoBoss extends EventEmitter {
     this.manager = new Manager(this.prisma, {
       schema: this.opts.schema,
       dlqRetentionDays: this.opts.dlqRetentionDays,
+      maxPayloadBytes: this.opts.maxPayloadBytes,
       onRetry: this.opts.onRetry
         ? (job, err) => this.opts.onRetry!(job, err)
         : undefined,

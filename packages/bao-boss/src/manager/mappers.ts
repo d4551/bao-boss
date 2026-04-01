@@ -14,7 +14,7 @@ export const createQueueSchema = t.Object({
   retryJitter: t.Optional(t.Boolean()),
   expireIn: t.Optional(t.Integer({ minimum: 1 })),
   retentionDays: t.Optional(t.Integer({ minimum: 1 })),
-  deadLetter: t.Optional(t.String()),
+  deadLetter: t.Optional(t.String({ minLength: 1 })),
   rateLimit: t.Optional(t.Object({ count: t.Integer({ minimum: 1 }), period: t.Integer({ minimum: 1 }) })),
   debounce: t.Optional(t.Integer({ minimum: 1 })),
   fairness: t.Optional(t.Object({ lowPriorityShare: t.Number({ minimum: 0, maximum: 1 }) })),
@@ -30,7 +30,7 @@ export const sendOptionsSchema = t.Object({
   expireIn: t.Optional(t.Integer({ minimum: 1 })),
   expireIfNotStartedIn: t.Optional(t.Integer({ minimum: 1 })),
   singletonKey: t.Optional(t.String()),
-  deadLetter: t.Optional(t.String()),
+  deadLetter: t.Optional(t.String({ minLength: 1 })),
   dependsOn: t.Optional(t.Array(t.String())),
 })
 
@@ -151,6 +151,7 @@ export function toJsonValue(value: unknown): Prisma.InputJsonValue {
 
 export interface ManagerOptions {
   dlqRetentionDays?: number
+  maxPayloadBytes?: number
   onRetry?: (job: Job<unknown>, error: Error) => Promise<void>
   onDlq?: (payload: { jobId: string; queue: string; deadLetter: string }) => void
 }

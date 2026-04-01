@@ -1,19 +1,10 @@
 import type { BaoBoss } from '../BaoBoss.js'
 import { formatDateTime, t } from '../i18n.js'
 import { getMetricsSnapshot, getQueueDepths, toPrometheusFormat } from '../Metrics.js'
-import { esc, stateBadgeClass, progressBarHtml, emptyRow, queueRowHtml, jobRowHtml } from './html.js'
+import { esc, stateBadgeClass, progressBarHtml, emptyRow, queueRowHtml, jobRowHtml, queuesTableHtml } from './html.js'
 import { fragmentResponse } from './response.js'
 
 type FullPageFn = (content: string, title: string, csrfToken?: string, status?: number) => Response
-
-function queuesTableHtml(rows: string, prefix: string, locale: string): string {
-  return `<table class="table table-zebra" hx-get="${prefix}/queues" hx-trigger="every 5s" hx-swap="outerHTML">
-    <thead><tr>
-      <th scope="col">${t('table.name', locale)}</th><th scope="col">${t('table.policy', locale)}</th><th scope="col">${t('table.pending', locale)}</th><th scope="col">${t('table.retryLimit', locale)}</th><th scope="col">${t('table.deadLetter', locale)}</th><th scope="col">${t('table.created', locale)}</th>
-    </tr></thead>
-    <tbody>${rows}</tbody>
-  </table>`
-}
 
 export async function dashboardIndex(
   boss: BaoBoss,
@@ -76,15 +67,20 @@ export async function queuesFragment(
   boss: BaoBoss,
   prefix: string,
   locale: string,
+  search?: string,
 ): Promise<Response> {
-  const queues = await boss.getQueues()
+  let queues = await boss.getQueues()
+  if (search) {
+    const term = search.toLowerCase()
+    queues = queues.filter(q => q.name.toLowerCase().includes(term))
+  }
   const rows = await Promise.all(queues.map(async q => {
     const size = await boss.getQueueSize(q.name)
     return queueRowHtml(q, prefix, locale, size)
   }))
   return fragmentResponse(queuesTableHtml(
     rows.length === 0 ? emptyRow(6, t('empty.noQueuesShort', locale)) : rows.join(''),
-    prefix, locale
+    prefix, locale, search
   ))
 }
 
@@ -295,6 +291,16 @@ export async function schedulesPage(
     </div>
   `
   return fullPage(content, t('section.schedules', locale), csrfToken)
+}
+
+export async function bulkRetryJobs(boss: BaoBoss, locale: string, ids: string[]): Promise<Response> {
+  await boss.resume(ids)
+  return fragmentResponse(`<span class="badge badge-success">${t('msg.bulkRetryDone', locale)}</span>`)
+}
+
+export async function bulkCancelJobs(boss: BaoBoss, locale: string, ids: string[]): Promise<Response> {
+  await boss.cancel(ids)
+  return fragmentResponse(`<span class="badge badge-ghost">${t('msg.bulkCancelDone', locale)}</span>`)
 }
 
 export async function deleteSchedule(

@@ -103,6 +103,33 @@ describe.skipIf(skip)('Maintenance', () => {
     await cleanupQueue(boss, qname)
   })
 
+  it('DLQ job that also fails goes to its own DLQ', async () => {
+    const dlq2 = uniqueName('dlq2')
+    const dlq1 = uniqueName('dlq1')
+    const qname = uniqueName('dlq-cascade')
+    await boss.createQueue(dlq2)
+    await boss.createQueue(dlq1, { retryLimit: 0, deadLetter: dlq2 })
+    await boss.createQueue(qname, { retryLimit: 0, deadLetter: dlq1 })
+
+    const id = await boss.send(qname, { task: 'cascade' })
+    await boss.fetch(qname, { batchSize: 1 })
+    await boss.fail(id, 'fail main')
+
+    // Job should be in DLQ1
+    const dlq1Jobs = await boss.fetch(dlq1, { batchSize: 1 })
+    expect(dlq1Jobs).toHaveLength(1)
+
+    // Fail the DLQ1 job — should cascade to DLQ2
+    await boss.fail(dlq1Jobs[0]!.id, 'fail dlq1')
+
+    const dlq2Jobs = await boss.fetch(dlq2, { batchSize: 1 })
+    expect(dlq2Jobs).toHaveLength(1)
+
+    await cleanupQueue(boss, qname)
+    await cleanupQueue(boss, dlq1)
+    await cleanupQueue(boss, dlq2)
+  })
+
   it('archives completed jobs', async () => {
     const qname = uniqueName('archive')
     // Use very short archive threshold

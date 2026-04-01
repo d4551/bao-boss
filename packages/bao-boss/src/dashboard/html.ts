@@ -40,6 +40,22 @@ export function queueRowHtml(queue: Queue, prefix: string, locale: string, size:
   </tr>`
 }
 
+export function queuesTableHtml(rows: string, prefix: string, locale: string, search?: string): string {
+  const searchVal = search ? esc(search) : ''
+  return `<div>
+    <input type="search" name="search" value="${searchVal}" placeholder="${t('field.search', locale)}"
+      class="input input-bordered input-sm mb-4 w-full max-w-xs"
+      aria-label="${t('aria.searchQueues', locale)}"
+      hx-get="${prefix}/queues" hx-trigger="input changed delay:300ms, search" hx-target="closest div" hx-swap="outerHTML" />
+    <table class="table table-zebra" hx-get="${prefix}/queues" hx-trigger="every 5s" hx-swap="outerHTML" hx-target="closest div" hx-include="[name='search']">
+      <thead><tr>
+        <th scope="col">${t('table.name', locale)}</th><th scope="col">${t('table.policy', locale)}</th><th scope="col">${t('table.pending', locale)}</th><th scope="col">${t('table.retryLimit', locale)}</th><th scope="col">${t('table.deadLetter', locale)}</th><th scope="col">${t('table.created', locale)}</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`
+}
+
 export function jobRowHtml(job: Job, prefix: string, locale: string): string {
   const badgeClass = stateBadgeClass(job.state)
   const shortId = job.id.slice(0, 8)

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import { BaoBoss } from '../src/BaoBoss'
+import { Maintenance } from '../src/Maintenance'
 
 const skip = !Bun.env['DATABASE_URL']
 
@@ -9,7 +10,7 @@ describe.skipIf(skip)('Scheduler', () => {
   beforeAll(async () => {
     boss = new BaoBoss({
       connectionString: Bun.env['DATABASE_URL'],
-      maintenanceIntervalSeconds: 1, // fast maintenance for testing
+      noSupervisor: true, // manual control over maintenance
     })
     await boss.start()
   })
@@ -41,15 +42,17 @@ describe.skipIf(skip)('Scheduler', () => {
   })
 
   it('fires a cron schedule that matches current time', async () => {
-    // Create a schedule that matches every minute (wildcard)
     const name = `test-cron-fire-${Date.now()}`
     await boss.createQueue(name)
     await boss.schedule(name, '* * * * *', { fired: true })
 
-    // Wait for maintenance loop to fire
-    await new Promise(resolve => setTimeout(resolve, 2500))
+    // Fire maintenance manually once
+    const m = new Maintenance(boss.prisma, boss, {
+      schema: 'baoboss', intervalSeconds: 999,
+      archiveCompletedAfterSeconds: 43200, deleteArchivedAfterDays: 7, dlqRetentionDays: 14,
+    })
+    await m.run()
 
-    // Check that a job was created in the queue
     const jobs = await boss.fetch(name, { batchSize: 1 })
     expect(jobs.length).toBeGreaterThan(0)
     expect((jobs[0]!.data as { fired: boolean }).fired).toBe(true)
@@ -63,10 +66,15 @@ describe.skipIf(skip)('Scheduler', () => {
     await boss.createQueue(name)
     await boss.schedule(name, '* * * * *', { dedup: true })
 
-    // Wait for 2 maintenance cycles
-    await new Promise(resolve => setTimeout(resolve, 3000))
+    // Fire maintenance manually twice in the same minute
+    const m = new Maintenance(boss.prisma, boss, {
+      schema: 'baoboss', intervalSeconds: 999,
+      archiveCompletedAfterSeconds: 43200, deleteArchivedAfterDays: 7, dlqRetentionDays: 14,
+    })
+    await m.run()
+    await m.run()
 
-    // Should only have 1 job for this minute
+    // Cron lock prevents duplicate — should only have 1 job
     const size = await boss.getQueueSize(name)
     expect(size).toBe(1)
 

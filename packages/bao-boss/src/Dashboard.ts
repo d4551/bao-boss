@@ -12,6 +12,8 @@ import {
   jobDetail,
   retryJob,
   cancelJob,
+  bulkRetryJobs,
+  bulkCancelJobs,
   schedulesPage,
   deleteSchedule,
   metricsEndpoint,
@@ -112,11 +114,19 @@ export function baoBossDashboard(boss: BaoBoss, options: DashboardOptions = {}) 
     htmlResponse(shell(prefix, content, title, csrfToken, lang, locale), csrfToken, status)
 
   app.get('/', () => dashboardIndex(boss, prefix, locale, fullPage, getCsrf()))
-  app.get('/queues', () => queuesFragment(boss, prefix, locale))
+  app.get('/queues', ({ query }) => queuesFragment(boss, prefix, locale, query.search ? String(query.search) : undefined))
   app.get('/queues/:name', ({ params }) => queueDetail(boss, prefix, locale, params.name, fullPage, getCsrf()))
   app.get('/jobs/:id', ({ params }) => jobDetail(boss, prefix, locale, params.id, fullPage, getCsrf()))
   app.post('/jobs/:id/retry', ({ params, query }) => retryJob(boss, locale, params.id, query.ctx === 'detail' ? 'detail' : 'list'))
   app.delete('/jobs/:id', ({ params, query }) => cancelJob(boss, locale, params.id, query.ctx === 'detail' ? 'detail' : 'list'))
+  app.post('/jobs/bulk/retry', ({ body }) => {
+    const ids = (body as { ids?: string[] })?.ids ?? []
+    return bulkRetryJobs(boss, locale, ids)
+  })
+  app.post('/jobs/bulk/cancel', ({ body }) => {
+    const ids = (body as { ids?: string[] })?.ids ?? []
+    return bulkCancelJobs(boss, locale, ids)
+  })
   app.get('/schedules', () => schedulesPage(boss, prefix, locale, fullPage, getCsrf()))
   app.delete('/schedules/:name', ({ params }) => deleteSchedule(boss, params.name))
   app.get('/sse/progress/:id', ({ params, query }) => sseProgress(boss, prefix, locale, params.id, String(query.locale ?? '')))

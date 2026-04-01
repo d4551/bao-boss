@@ -1,6 +1,6 @@
 import { PrismaClient, Prisma } from '../generated/prisma/client.js'
 import { Value } from '@sinclair/typebox/value'
-import type { Job, SendOptions, JobState } from '../types.js'
+import type { Job, SendOptions } from '../types.js'
 import {
   sendOptionsSchema,
   resolveStartAfter,
@@ -41,22 +41,10 @@ async function handleDebounce(
   return `debounce:${name}:default`
 }
 
-async function checkQueuePolicy(
-  prisma: PrismaClient,
-  name: string,
-  policy: string,
-): Promise<string | null> {
-  if (policy === 'short') {
-    const existing = await prisma.job.findFirst({
-      where: { queue: name, state: 'created' },
-    })
+async function checkQueuePolicy(prisma: PrismaClient, name: string, policy: string): Promise<string | null> {
+  if (policy === 'short' || policy === 'stately') {
+    const existing = await prisma.job.findFirst({ where: { queue: name, state: 'created' } })
     if (existing) return existing.id
-  }
-  if (policy === 'stately') {
-    const hasCreated = await prisma.job.findFirst({
-      where: { queue: name, state: 'created' },
-    })
-    if (hasCreated) return hasCreated.id
   }
   return null
 }
@@ -138,21 +126,27 @@ async function createDlqJobs(
   onDlq?: (payload: { jobId: string; queue: string; deadLetter: string }) => void,
 ): Promise<void> {
   const keepUntil = new Date(Date.now() + dlqRetentionDays * 24 * 60 * 60 * 1000)
+  const dlqNames = [...new Set(dlqJobs.map(j => j.deadLetter!))]
+  const dlqQueues = await prisma.queue.findMany({ where: { name: { in: dlqNames } } })
+  const dlqQueueMap = new Map(dlqQueues.map(q => [q.name, q]))
   await prisma.job.createMany({
-    data: dlqJobs.map((j) => ({
-      queue: j.deadLetter!,
-      data: j.data as Prisma.InputJsonValue,
-      priority: j.priority,
-      retryLimit: 0,
-      retryCount: 0,
-      retryDelay: 0,
-      retryBackoff: false,
-      expireIn: j.expireIn,
-      singletonKey: j.singletonKey,
-      deadLetter: null,
-      policy: 'standard',
-      keepUntil,
-    })),
+    data: dlqJobs.map((j) => {
+      const targetQueue = dlqQueueMap.get(j.deadLetter!)
+      return {
+        queue: j.deadLetter!,
+        data: j.data as Prisma.InputJsonValue,
+        priority: j.priority,
+        retryLimit: 0,
+        retryCount: 0,
+        retryDelay: 0,
+        retryBackoff: false,
+        expireIn: j.expireIn,
+        singletonKey: j.singletonKey,
+        deadLetter: targetQueue?.deadLetter ?? null,
+        policy: 'standard',
+        keepUntil,
+      }
+    }),
   })
   for (const j of dlqJobs) {
     onDlq?.({ jobId: j.id, queue: jobQueueMap.get(j.id) ?? 'unknown', deadLetter: j.deadLetter! })
@@ -161,6 +155,8 @@ async function createDlqJobs(
 
 // ── JobOps class ─────────────────────────────────────────────────
 
+const textEncoder = new TextEncoder()
+
 export class JobOps {
   constructor(
     private readonly prisma: PrismaClient,
@@ -168,7 +164,23 @@ export class JobOps {
     private readonly options: ManagerOptions,
   ) {}
 
+  private assertPayloadWithinLimit(data: unknown): void {
+    const maxBytes = this.options.maxPayloadBytes
+    if (!maxBytes || data === undefined) return
+    let json: string
+    try {
+      json = JSON.stringify(data)
+    } catch {
+      throw new Error('Job payload cannot be serialized to JSON (circular reference or invalid type)')
+    }
+    const size = textEncoder.encode(json).byteLength
+    if (size > maxBytes) {
+      throw new Error(`Job payload size ${size} bytes exceeds maximum of ${maxBytes} bytes`)
+    }
+  }
+
   async send<T = unknown>(name: string, data?: T, options: SendOptions = {}): Promise<string> {
+    this.assertPayloadWithinLimit(data)
     const opts = Value.Decode(sendOptionsSchema, options)
     const queue = await this.prisma.queue.findUnique({ where: { name } })
 
@@ -209,27 +221,21 @@ export class JobOps {
   }
 
   async insert(jobs: Array<{ name: string; data?: unknown; options?: SendOptions }>): Promise<string[]> {
+    for (const entry of jobs) this.assertPayloadWithinLimit(entry.data)
     const ids: string[] = []
     await this.prisma.$transaction(async (tx) => {
-      for (const job of jobs) {
-        const opts = Value.Decode(sendOptionsSchema, job.options ?? {})
-        const queue = await tx.queue.findUnique({ where: { name: job.name } })
+      for (const entry of jobs) {
+        const opts = Value.Decode(sendOptionsSchema, entry.options ?? {})
+        const q = await tx.queue.findUnique({ where: { name: entry.name } })
         const created = await tx.job.create({
           data: {
-            queue: job.name,
-            data: job.data as Prisma.InputJsonValue,
-            priority: opts.priority ?? 0,
-            startAfter: resolveStartAfter(opts.startAfter),
-            retryLimit: opts.retryLimit ?? queue?.retryLimit ?? 2,
-            retryDelay: opts.retryDelay ?? queue?.retryDelay ?? 0,
-            retryBackoff: opts.retryBackoff ?? queue?.retryBackoff ?? false,
-            retryJitter: opts.retryJitter ?? queue?.retryJitter ?? false,
-            expireIn: opts.expireIn ?? queue?.expireIn ?? 900,
-            expireIfNotStartedIn: opts.expireIfNotStartedIn,
-            singletonKey: opts.singletonKey,
-            deadLetter: opts.deadLetter ?? queue?.deadLetter,
-            policy: queue?.policy ?? 'standard',
-            keepUntil: new Date(Date.now() + (queue?.retentionDays ?? 14) * 24 * 60 * 60 * 1000),
+            queue: entry.name, data: entry.data as Prisma.InputJsonValue,
+            priority: opts.priority ?? 0, startAfter: resolveStartAfter(opts.startAfter),
+            retryLimit: opts.retryLimit ?? q?.retryLimit ?? 2, retryDelay: opts.retryDelay ?? q?.retryDelay ?? 0,
+            retryBackoff: opts.retryBackoff ?? q?.retryBackoff ?? false, retryJitter: opts.retryJitter ?? q?.retryJitter ?? false,
+            expireIn: opts.expireIn ?? q?.expireIn ?? 900, expireIfNotStartedIn: opts.expireIfNotStartedIn,
+            singletonKey: opts.singletonKey, deadLetter: opts.deadLetter ?? q?.deadLetter,
+            policy: q?.policy ?? 'standard', keepUntil: new Date(Date.now() + (q?.retentionDays ?? 14) * 86_400_000),
           },
         })
         if (opts.dependsOn && opts.dependsOn.length > 0) {

@@ -101,6 +101,48 @@ describe.skipIf(skip)('Job Dependencies', () => {
     await cleanupQueue(boss, qname)
   })
 
+  it('getJobDependencies returns upstream and downstream', async () => {
+    const qname = uniqueName('deps-query')
+    await boss.createQueue(qname)
+
+    const idA = await boss.send(qname, { name: 'A' })
+    const idB = await boss.send(qname, { name: 'B' }, { dependsOn: [idA] })
+    const idC = await boss.send(qname, { name: 'C' }, { dependsOn: [idB] })
+
+    // B depends on A, and C depends on B
+    const depsB = await boss.getJobDependencies(idB)
+    expect(depsB.dependsOn).toHaveLength(1)
+    expect(depsB.dependsOn[0]!.id).toBe(idA)
+    expect(depsB.dependedBy).toHaveLength(1)
+    expect(depsB.dependedBy[0]!.id).toBe(idC)
+
+    // A has no upstream, one downstream
+    const depsA = await boss.getJobDependencies(idA)
+    expect(depsA.dependsOn).toHaveLength(0)
+    expect(depsA.dependedBy).toHaveLength(1)
+    expect(depsA.dependedBy[0]!.id).toBe(idB)
+
+    // C has one upstream, no downstream
+    const depsC = await boss.getJobDependencies(idC)
+    expect(depsC.dependsOn).toHaveLength(1)
+    expect(depsC.dependsOn[0]!.id).toBe(idB)
+    expect(depsC.dependedBy).toHaveLength(0)
+
+    await cleanupQueue(boss, qname)
+  })
+
+  it('getJobDependencies for job with no dependencies returns empty', async () => {
+    const qname = uniqueName('deps-nodeps')
+    await boss.createQueue(qname)
+
+    const id = await boss.send(qname, { name: 'solo' })
+    const deps = await boss.getJobDependencies(id)
+    expect(deps.dependsOn).toHaveLength(0)
+    expect(deps.dependedBy).toHaveLength(0)
+
+    await cleanupQueue(boss, qname)
+  })
+
   it('dependency chain A -> B -> C', async () => {
     const qname = uniqueName('deps-chain')
     await boss.createQueue(qname)

@@ -6,6 +6,3 @@ bunfig.toml
 prisma.config.ts
 .gitignore
 *.tgz
-
-# Generated (consumers run postinstall to generate)
-src/generated/

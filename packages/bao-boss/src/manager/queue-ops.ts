@@ -8,6 +8,9 @@ export class QueueOps {
 
   async createQueue(name: string, options: CreateQueueOptions = {}): Promise<Queue> {
     const opts = Value.Decode(createQueueSchema, options)
+    if (opts.deadLetter) {
+      await this.validateDeadLetter(opts.deadLetter, name)
+    }
     const policyValue: Policy = (opts.policy ?? 'standard') as Policy
     const q = await this.prisma.queue.upsert({
       where: { name },
@@ -51,7 +54,14 @@ export class QueueOps {
     if (options.retryJitter !== undefined) data.retryJitter = options.retryJitter
     if (options.expireIn !== undefined) data.expireIn = options.expireIn
     if (options.retentionDays !== undefined) data.retentionDays = options.retentionDays
-    if (options.deadLetter !== undefined) data.deadLetter = options.deadLetter
+    if (options.deadLetter !== undefined) {
+      if (options.deadLetter) {
+        await this.validateDeadLetter(options.deadLetter, name)
+        data.deadLetter = options.deadLetter
+      } else {
+        data.deadLetter = null
+      }
+    }
     if (options.rateLimit !== undefined) data.rateLimit = toJsonValue(options.rateLimit)
     if (options.debounce !== undefined) data.debounce = options.debounce
     if (options.fairness !== undefined) data.fairness = toJsonValue(options.fairness)
@@ -107,5 +117,27 @@ export class QueueOps {
     return this.prisma.job.count({
       where: { queue, state: { in: states } },
     })
+  }
+
+  private async validateDeadLetter(deadLetter: string, queueName: string): Promise<void> {
+    if (deadLetter === queueName) {
+      throw new Error(`Queue '${queueName}' cannot use itself as its dead letter queue`)
+    }
+    const dlq = await this.prisma.queue.findUnique({ where: { name: deadLetter } })
+    if (!dlq) {
+      throw new Error(`Dead letter queue '${deadLetter}' does not exist`)
+    }
+    const visited = new Set<string>([queueName, deadLetter])
+    let current = dlq.deadLetter
+    while (current) {
+      if (current === queueName) {
+        throw new Error(`Circular dead letter reference involving queue '${queueName}'`)
+      }
+      if (visited.has(current) || visited.size >= 32) break
+      visited.add(current)
+      const next = await this.prisma.queue.findUnique({ where: { name: current } })
+      if (!next) break
+      current = next.deadLetter
+    }
   }
 }

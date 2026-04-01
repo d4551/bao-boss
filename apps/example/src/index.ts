@@ -8,8 +8,8 @@ const boss = new BaoBoss({ connectionString: Bun.env['DATABASE_URL'] })
 boss.on('error', console.error)
 await boss.start()
 
-await boss.createQueue('emails', { retryLimit: 3, retryBackoff: true, deadLetter: 'emails-dlq' })
 await boss.createQueue('emails-dlq')
+await boss.createQueue('emails', { retryLimit: 3, retryBackoff: true, deadLetter: 'emails-dlq' })
 
 await boss.schedule('daily-digest', '0 8 * * *', { type: 'digest' })
 
