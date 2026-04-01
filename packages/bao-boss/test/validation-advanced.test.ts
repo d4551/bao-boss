@@ -44,6 +44,22 @@ describe.skipIf(skip)('Dead Letter Queue Validation', () => {
     await cleanupQueue(boss, q2)
   })
 
+  it('rejects deep circular dead letter references (A -> B -> C -> A)', async () => {
+    const qA = uniqueName('dlq-deep-a')
+    const qB = uniqueName('dlq-deep-b')
+    const qC = uniqueName('dlq-deep-c')
+    await boss.createQueue(qA)
+    await boss.createQueue(qB, { deadLetter: qA })
+    await boss.createQueue(qC, { deadLetter: qB })
+    // A -> C -> B -> A would create a cycle
+    await expect(
+      boss.updateQueue(qA, { deadLetter: qC })
+    ).rejects.toThrow('Circular dead letter')
+    await cleanupQueue(boss, qA)
+    await cleanupQueue(boss, qB)
+    await cleanupQueue(boss, qC)
+  })
+
   it('allows valid dead letter queue reference', async () => {
     const dlq = uniqueName('dlq-valid')
     const qname = uniqueName('dlq-main')
@@ -82,6 +98,16 @@ describe.skipIf(skip)('Payload Size Validation', () => {
     const largeData = { big: 'x'.repeat(200) }
     await expect(
       boss.send(qname, largeData)
+    ).rejects.toThrow('exceeds maximum')
+    await cleanupQueue(boss, qname)
+  })
+
+  it('rejects oversized payloads in insert() too', async () => {
+    const qname = uniqueName('payload-insert')
+    await boss.createQueue(qname)
+    const largeData = { big: 'x'.repeat(200) }
+    await expect(
+      boss.insert([{ name: qname, data: largeData }])
     ).rejects.toThrow('exceeds maximum')
     await cleanupQueue(boss, qname)
   })

@@ -41,22 +41,10 @@ async function handleDebounce(
   return `debounce:${name}:default`
 }
 
-async function checkQueuePolicy(
-  prisma: PrismaClient,
-  name: string,
-  policy: string,
-): Promise<string | null> {
-  if (policy === 'short') {
-    const existing = await prisma.job.findFirst({
-      where: { queue: name, state: 'created' },
-    })
+async function checkQueuePolicy(prisma: PrismaClient, name: string, policy: string): Promise<string | null> {
+  if (policy === 'short' || policy === 'stately') {
+    const existing = await prisma.job.findFirst({ where: { queue: name, state: 'created' } })
     if (existing) return existing.id
-  }
-  if (policy === 'stately') {
-    const hasCreated = await prisma.job.findFirst({
-      where: { queue: name, state: 'created' },
-    })
-    if (hasCreated) return hasCreated.id
   }
   return null
 }
@@ -167,6 +155,8 @@ async function createDlqJobs(
 
 // ── JobOps class ─────────────────────────────────────────────────
 
+const textEncoder = new TextEncoder()
+
 export class JobOps {
   constructor(
     private readonly prisma: PrismaClient,
@@ -177,8 +167,7 @@ export class JobOps {
   private assertPayloadWithinLimit(data: unknown): void {
     const maxBytes = this.options.maxPayloadBytes
     if (!maxBytes || data === undefined) return
-    const json = JSON.stringify(data)
-    const size = new TextEncoder().encode(json).byteLength
+    const size = textEncoder.encode(JSON.stringify(data)).byteLength
     if (size > maxBytes) {
       throw new Error(`Job payload size ${size} bytes exceeds maximum of ${maxBytes} bytes`)
     }
@@ -226,10 +215,10 @@ export class JobOps {
   }
 
   async insert(jobs: Array<{ name: string; data?: unknown; options?: SendOptions }>): Promise<string[]> {
+    for (const entry of jobs) this.assertPayloadWithinLimit(entry.data)
     const ids: string[] = []
     await this.prisma.$transaction(async (tx) => {
       for (const entry of jobs) {
-        this.assertPayloadWithinLimit(entry.data)
         const opts = Value.Decode(sendOptionsSchema, entry.options ?? {})
         const q = await tx.queue.findUnique({ where: { name: entry.name } })
         const created = await tx.job.create({

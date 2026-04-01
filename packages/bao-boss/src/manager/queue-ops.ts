@@ -123,16 +123,18 @@ export class QueueOps {
     if (!dlq) {
       throw new Error(`Dead letter queue '${deadLetter}' does not exist`)
     }
-    const visited = new Set<string>([deadLetter])
-    let nextHop: string | null = dlq.deadLetter
-    while (nextHop) {
-      if (nextHop === queueName) {
-        throw new Error(`Circular dead letter reference involving '${queueName}' and '${deadLetter}'`)
+    const visited = new Set<string>([queueName, deadLetter])
+    let current = dlq.deadLetter
+    while (current) {
+      if (current === queueName) {
+        throw new Error(`Circular dead letter reference involving queue '${queueName}'`)
       }
-      if (visited.has(nextHop)) break
-      visited.add(nextHop)
-      const q = await this.prisma.queue.findUnique({ where: { name: nextHop } })
-      nextHop = q?.deadLetter ?? null
+      if (visited.has(current)) break
+      visited.add(current)
+      const next = await this.prisma.queue.findUnique({ where: { name: current } })
+      if (!next) break
+      current = next.deadLetter
+      if (visited.size > 32) break
     }
   }
 }

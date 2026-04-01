@@ -47,7 +47,7 @@ export function queuesTableHtml(rows: string, prefix: string, locale: string, se
       class="input input-bordered input-sm mb-4 w-full max-w-xs"
       aria-label="${t('aria.searchQueues', locale)}"
       hx-get="${prefix}/queues" hx-trigger="input changed delay:300ms, search" hx-target="closest div" hx-swap="outerHTML" />
-    <table class="table table-zebra" hx-get="${prefix}/queues" hx-trigger="every 5s" hx-include="[name='search']" hx-swap="outerHTML" hx-target="closest div">
+    <table class="table table-zebra" hx-get="${prefix}/queues" hx-trigger="every 5s" hx-swap="outerHTML" hx-target="closest div" hx-include="[name='search']">
       <thead><tr>
         <th scope="col">${t('table.name', locale)}</th><th scope="col">${t('table.policy', locale)}</th><th scope="col">${t('table.pending', locale)}</th><th scope="col">${t('table.retryLimit', locale)}</th><th scope="col">${t('table.deadLetter', locale)}</th><th scope="col">${t('table.created', locale)}</th>
       </tr></thead>
