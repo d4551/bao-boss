@@ -1,6 +1,6 @@
 {
   "name": "bao-boss",
-  "version": "0.1.1-rc1",
+  "version": "0.1.11",
   "description": "Bun-native PostgreSQL job queue with SKIP LOCKED, retries, cron scheduling, pub/sub, dead letter queues, and an HTMX dashboard",
   "type": "module",
   "exports": {
@@ -10,10 +10,11 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "bin": {
-    "bao": "./src/cli.ts"
+    "bao": "./bin/bao.js"
   },
   "files": [
     "src",
+    "bin",
     "prisma",
     "sql",
     "CHANGELOG.md",
@@ -70,7 +71,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/d4551/bao-boss.git",
+    "url": "git+https://github.com/d4551/bao-boss.git",
     "directory": "packages/bao-boss"
   },
   "homepage": "https://github.com/d4551/bao-boss#readme",
