@@ -34,6 +34,23 @@ describe.skipIf(skip)('Maintenance', () => {
     await cleanupQueue(boss, qname)
   })
 
+  it('exhausted retries without deadLetter does not create spurious DLQ job', async () => {
+    const qname = uniqueName('no-dlq')
+    await boss.createQueue(qname, { retryLimit: 0 })
+    const id = await boss.send(qname, { task: 'no-dlq' })
+    await boss.fetch(qname, { batchSize: 1 })
+    await boss.fail(id, 'exhausted')
+
+    const job = await boss.getJobById(id)
+    expect(job!.state).toBe('failed')
+
+    // No DLQ configured — total jobs in the system for this queue should be just this one
+    const { jobs } = await boss.searchJobs({ queue: qname })
+    expect(jobs).toHaveLength(1)
+    expect(jobs[0]!.id).toBe(id)
+    await cleanupQueue(boss, qname)
+  })
+
   it('expired active job with DLQ gets promoted', async () => {
     const dlqName = uniqueName('dlq')
     const qname = uniqueName('expire-dlq')
