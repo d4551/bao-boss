@@ -60,6 +60,20 @@ describe.skipIf(skip)('Dead Letter Queue Validation', () => {
     await cleanupQueue(boss, qC)
   })
 
+  it('clears dead letter queue when set to empty string', async () => {
+    const dlq = uniqueName('dlq-clear')
+    const qname = uniqueName('dlq-clearmain')
+    await boss.createQueue(dlq)
+    await boss.createQueue(qname, { deadLetter: dlq })
+    const before = await boss.getQueue(qname)
+    expect(before!.deadLetter).toBe(dlq)
+    await boss.updateQueue(qname, { deadLetter: '' })
+    const after = await boss.getQueue(qname)
+    expect(after!.deadLetter).toBeNull()
+    await cleanupQueue(boss, qname)
+    await cleanupQueue(boss, dlq)
+  })
+
   it('allows valid dead letter queue reference', async () => {
     const dlq = uniqueName('dlq-valid')
     const qname = uniqueName('dlq-main')

@@ -46,9 +46,6 @@ export class QueueOps {
   }
 
   async updateQueue(name: string, options: Partial<CreateQueueOptions>): Promise<Queue> {
-    if (options.deadLetter) {
-      await this.validateDeadLetter(options.deadLetter, name)
-    }
     const data: Prisma.QueueUpdateInput = {}
     if (options.policy !== undefined) data.policy = options.policy as Policy
     if (options.retryLimit !== undefined) data.retryLimit = options.retryLimit
@@ -57,7 +54,14 @@ export class QueueOps {
     if (options.retryJitter !== undefined) data.retryJitter = options.retryJitter
     if (options.expireIn !== undefined) data.expireIn = options.expireIn
     if (options.retentionDays !== undefined) data.retentionDays = options.retentionDays
-    if (options.deadLetter !== undefined) data.deadLetter = options.deadLetter
+    if (options.deadLetter !== undefined) {
+      if (options.deadLetter) {
+        await this.validateDeadLetter(options.deadLetter, name)
+        data.deadLetter = options.deadLetter
+      } else {
+        data.deadLetter = null
+      }
+    }
     if (options.rateLimit !== undefined) data.rateLimit = toJsonValue(options.rateLimit)
     if (options.debounce !== undefined) data.debounce = options.debounce
     if (options.fairness !== undefined) data.fairness = toJsonValue(options.fairness)

@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
-- 23 test files with 143 tests (up from 18 files / 96 tests)
+- 23 test files with 145 tests (up from 18 files / 96 tests)
 - **New**: `pubsub.test.ts` — subscribe, publish fan-out, unsubscribe, idempotent subscribe, send options propagation
 - **New**: `cron.test.ts` — `validateCron` accepts/rejects, `describeCron` aliases and patterns
 - **New**: `error-paths.test.ts` — idempotent complete/fail/cancel, no-op resume, null for missing IDs, empty arrays

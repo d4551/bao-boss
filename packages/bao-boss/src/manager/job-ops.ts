@@ -1,6 +1,6 @@
 import { PrismaClient, Prisma } from '../generated/prisma/client.js'
 import { Value } from '@sinclair/typebox/value'
-import type { Job, SendOptions, JobState } from '../types.js'
+import type { Job, SendOptions } from '../types.js'
 import {
   sendOptionsSchema,
   resolveStartAfter,
