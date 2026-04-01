@@ -1,7 +1,7 @@
 import { PrismaClient, Prisma } from './generated/prisma/client.js'
 import type { BaoBoss } from './BaoBoss.js'
 import { parseCron } from './cron.js'
-import { createDlqJobs, type DlqRow } from './manager/dlq.js'
+import { createDlqJobs } from './manager/dlq.js'
 import { validateSchema } from './schema.js'
 
 interface MaintenanceOptions {
