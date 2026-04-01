@@ -1,6 +1,7 @@
 import { PrismaClient, Prisma } from './generated/prisma/client.js'
 import type { BaoBoss } from './BaoBoss.js'
 import { parseCron } from './cron.js'
+import { createDlqJobs } from './manager/dlq.js'
 import { validateSchema } from './schema.js'
 
 interface MaintenanceOptions {
@@ -109,38 +110,26 @@ export class Maintenance {
        RETURNING id, "deadLetter" AS dead_letter, data, priority, "expireIn", "singletonKey"`
     )
 
-    const keepUntil = new Date(Date.now() + this.opts.dlqRetentionDays * 24 * 60 * 60 * 1000)
-    const dlqNames = [...new Set(expired.map(j => j.dead_letter).filter((n): n is string => n != null))]
-    const dlqQueues = dlqNames.length
-      ? await this.prisma.queue.findMany({ where: { name: { in: dlqNames } } })
-      : []
-    const dlqQueueMap = new Map(dlqQueues.map(q => [q.name, q]))
-
-    // Send to dead letter queues (mirror createDlqJobs: inherit target queue deadLetter for cascading)
-    for (const job of expired) {
-      if (job.dead_letter) {
-        try {
-          const targetQueue = dlqQueueMap.get(job.dead_letter)
-          await this.prisma.job.create({
-            data: {
-              queue: job.dead_letter,
-              data: job.data ?? Prisma.JsonNull,
-              priority: job.priority,
-              retryLimit: 0,
-              retryCount: 0,
-              retryDelay: 0,
-              retryBackoff: false,
-              expireIn: job.expireIn,
-              singletonKey: job.singletonKey,
-              deadLetter: targetQueue?.deadLetter ?? null,
-              policy: 'standard',
-              keepUntil,
-            },
-          })
-        } catch (err) {
-          this.boss.emit('error', err)
-        }
-      }
+    const dlqJobs = expired
+      .filter((j): j is typeof j & { dead_letter: string } => j.dead_letter != null)
+      .map((j) => ({
+        id: j.id,
+        deadLetter: j.dead_letter,
+        data: j.data ?? Prisma.JsonNull,
+        priority: j.priority,
+        expireIn: j.expireIn,
+        singletonKey: j.singletonKey,
+      }))
+    if (dlqJobs.length > 0) {
+      const jobQueueMap = new Map(dlqJobs.map(j => [j.id, 'expired']))
+      await createDlqJobs(
+        this.prisma,
+        dlqJobs,
+        jobQueueMap,
+        this.opts.dlqRetentionDays,
+        undefined,
+        (err) => this.boss.emit('error', err),
+      )
     }
   }
 

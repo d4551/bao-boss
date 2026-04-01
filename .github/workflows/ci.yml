@@ -147,7 +147,7 @@ jobs:
       - name: Publish to npm
         if: steps.check.outputs.already_published == 'false'
         working-directory: packages/bao-boss
-        run: bun publish --access public --ignore-scripts --registry https://registry.npmjs.org
+        run: npm publish --access public --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
