@@ -149,7 +149,7 @@ jobs:
         working-directory: packages/bao-boss
         run: bun publish --access public --ignore-scripts --registry https://registry.npmjs.org
         env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Skip publish (already published)
         if: steps.check.outputs.already_published == 'true'
