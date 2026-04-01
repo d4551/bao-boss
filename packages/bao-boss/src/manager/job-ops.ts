@@ -10,6 +10,7 @@ import {
   type RawJobRow,
   type ManagerOptions,
 } from './mappers.js'
+import { createDlqJobs, type ExhaustedRow } from './dlq.js'
 
 // ── Helpers for breaking up long functions ────────────────────────
 
@@ -107,50 +108,6 @@ function buildFetchQuery(
     ? ['', fairness, effectiveBatch]
     : ['', effectiveBatch]
   return { query, params }
-}
-
-interface ExhaustedRow {
-  id: string
-  deadLetter: string | null
-  data: unknown
-  priority: number
-  expireIn: number
-  singletonKey: string | null
-}
-
-async function createDlqJobs(
-  prisma: PrismaClient,
-  dlqJobs: ExhaustedRow[],
-  jobQueueMap: Map<string, string>,
-  dlqRetentionDays: number,
-  onDlq?: (payload: { jobId: string; queue: string; deadLetter: string }) => void,
-): Promise<void> {
-  const keepUntil = new Date(Date.now() + dlqRetentionDays * 24 * 60 * 60 * 1000)
-  const dlqNames = [...new Set(dlqJobs.map(j => j.deadLetter!))]
-  const dlqQueues = await prisma.queue.findMany({ where: { name: { in: dlqNames } } })
-  const dlqQueueMap = new Map(dlqQueues.map(q => [q.name, q]))
-  await prisma.job.createMany({
-    data: dlqJobs.map((j) => {
-      const targetQueue = dlqQueueMap.get(j.deadLetter!)
-      return {
-        queue: j.deadLetter!,
-        data: j.data as Prisma.InputJsonValue,
-        priority: j.priority,
-        retryLimit: 0,
-        retryCount: 0,
-        retryDelay: 0,
-        retryBackoff: false,
-        expireIn: j.expireIn,
-        singletonKey: j.singletonKey,
-        deadLetter: targetQueue?.deadLetter ?? null,
-        policy: 'standard',
-        keepUntil,
-      }
-    }),
-  })
-  for (const j of dlqJobs) {
-    onDlq?.({ jobId: j.id, queue: jobQueueMap.get(j.id) ?? 'unknown', deadLetter: j.deadLetter! })
-  }
 }
 
 // ── JobOps class ─────────────────────────────────────────────────
