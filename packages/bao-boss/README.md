@@ -192,6 +192,20 @@ await boss.createQueue('api-calls', {
 })
 ```
 
+## Configuration
+
+```ts
+const boss = new BaoBoss({
+  connectionString: Bun.env['DATABASE_URL'],
+  maxPayloadBytes: 1_048_576,          // reject job payloads over 1 MB
+  dlqRetentionDays: 14,                // keep DLQ jobs for 14 days
+  shutdownGracePeriodSeconds: 30,      // drain workers for 30s on stop
+  maintenanceIntervalSeconds: 120,     // run maintenance every 2 minutes
+})
+```
+
+Dead letter queues are validated on creation — the target queue must exist, self-references and circular chains are rejected.
+
 ## Search and Bulk Operations
 
 ```ts
@@ -229,7 +243,7 @@ const app = new Elysia()
   .listen(3000)
 ```
 
-Routes: queue list, queue detail, job detail, retry, cancel, schedules, stats, Prometheus metrics endpoint, SSE progress streaming.
+Routes: queue list (with live search), queue detail, job detail, retry, cancel, bulk retry/cancel, schedules, stats, Prometheus metrics endpoint, SSE progress streaming.
 
 ## Metrics
 

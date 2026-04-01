@@ -17,13 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **DLQ cascade**: dead letter queue jobs now inherit the target queue's `deadLetter` setting, enabling proper cascading through chained DLQ configurations
+- **DLQ cascade**: dead letter queue jobs now inherit the target queue's `deadLetter` setting in both the `fail()` path and the maintenance expiry path, enabling proper cascading through chained DLQ configurations
+- **Worker concurrency**: fixed race condition where `setInterval` could bypass `maxConcurrency` guard during async `fetch()`, and fixed `inFlight` leak when `fetch()` throws
+- **Payload size**: uses `TextEncoder.encode().byteLength` for byte-accurate measurement; catches circular references with a clear error
+- **Empty string deadLetter**: `updateQueue({ deadLetter: '' })` now clears to `null` instead of persisting an empty string
+- **Schedule test**: replaced wall-clock-dependent sleep with deterministic manual `Maintenance.run()` calls
 - **README**: Quick Start example now creates the DLQ queue before referencing it
 - **README**: Fixed `getQueueDepths` API signature (takes `prisma`, not `boss`)
+- **README**: Documented `maxPayloadBytes`, DLQ validation, dashboard search and bulk operations
 
 ### Tests
 
-- 23 test files with 145 tests (up from 18 files / 96 tests)
+- 23 test files with 146 tests (up from 18 files / 96 tests)
 - **New**: `pubsub.test.ts` — subscribe, publish fan-out, unsubscribe, idempotent subscribe, send options propagation
 - **New**: `cron.test.ts` — `validateCron` accepts/rejects, `describeCron` aliases and patterns
 - **New**: `error-paths.test.ts` — idempotent complete/fail/cancel, no-op resume, null for missing IDs, empty arrays
