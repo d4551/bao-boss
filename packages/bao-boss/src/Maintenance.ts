@@ -94,24 +94,47 @@ export class Maintenance {
 
   private async expireActiveJobs(): Promise<void> {
     const s = this.schema
-    const expired = await this.prisma.$queryRawUnsafe<Array<{ id: string; dead_letter: string | null; data: Prisma.JsonValue }>>(
+    const expired = await this.prisma.$queryRawUnsafe<
+      Array<{
+        id: string
+        dead_letter: string | null
+        data: Prisma.JsonValue
+        priority: number
+        expireIn: number
+        singletonKey: string | null
+      }>
+    >(
       `UPDATE "${s}".job SET state = 'failed', output = '{"error":"job expired"}'::jsonb
        WHERE state = 'active' AND "startedOn" + ("expireIn" || ' seconds')::interval < now()
-       RETURNING id, "deadLetter" AS dead_letter, data`
+       RETURNING id, "deadLetter" AS dead_letter, data, priority, "expireIn", "singletonKey"`
     )
 
-    // Send to dead letter queues
+    const keepUntil = new Date(Date.now() + this.opts.dlqRetentionDays * 24 * 60 * 60 * 1000)
+    const dlqNames = [...new Set(expired.map(j => j.dead_letter).filter((n): n is string => n != null))]
+    const dlqQueues = dlqNames.length
+      ? await this.prisma.queue.findMany({ where: { name: { in: dlqNames } } })
+      : []
+    const dlqQueueMap = new Map(dlqQueues.map(q => [q.name, q]))
+
+    // Send to dead letter queues (mirror createDlqJobs: inherit target queue deadLetter for cascading)
     for (const job of expired) {
       if (job.dead_letter) {
         try {
-          const targetQueue = await this.prisma.queue.findUnique({ where: { name: job.dead_letter } })
+          const targetQueue = dlqQueueMap.get(job.dead_letter)
           await this.prisma.job.create({
             data: {
               queue: job.dead_letter,
               data: job.data ?? Prisma.JsonNull,
+              priority: job.priority,
+              retryLimit: 0,
+              retryCount: 0,
+              retryDelay: 0,
+              retryBackoff: false,
+              expireIn: job.expireIn,
+              singletonKey: job.singletonKey,
               deadLetter: targetQueue?.deadLetter ?? null,
               policy: 'standard',
-              keepUntil: new Date(Date.now() + this.opts.dlqRetentionDays * 24 * 60 * 60 * 1000),
+              keepUntil,
             },
           })
         } catch (err) {
