@@ -58,44 +58,44 @@ export class Worker<T = unknown> {
       if (this.draining) return
       try {
         if (this.inFlight >= this.opts.maxConcurrency) return
-
-        await this.boss.runBeforeFetch(this.queue)
-        const jobs = await this.boss.fetch<T>(this.queue, { batchSize: this.opts.batchSize })
-        if (jobs.length === 0) return
-
         this.inFlight++
-        const runHandler = async () => {
-          if (this.opts.handlerTimeoutSeconds && this.opts.handlerTimeoutSeconds > 0) {
-            const ac = new AbortController()
-            const timer = setTimeout(() => ac.abort(), this.opts.handlerTimeoutSeconds * 1000)
-            try {
-              await Promise.race([
-                this.handler(jobs),
-                new Promise<never>((_, reject) => {
-                  ac.signal.addEventListener('abort', () => reject(new Error(`Handler timed out after ${this.opts.handlerTimeoutSeconds}s on queue "${this.queue}"`)))
-                }),
-              ])
-            } finally {
-              clearTimeout(timer)
-            }
-          } else {
-            await this.handler(jobs)
-          }
-        }
         try {
-          const start = Date.now()
-          await runHandler()
-          recordProcessingDuration(Date.now() - start, this.queue)
-          for (let i = 0; i < jobs.length; i++) recordJobCompleted(this.queue)
-          await this.boss.complete(jobs.map((j: Job<T>) => j.id))
-          await this.boss.runAfterComplete(jobs)
-        } catch (err) {
-          for (let i = 0; i < jobs.length; i++) recordJobFailed(this.queue)
-          const error = err instanceof Error ? err : new Error(String(err))
-          for (const job of jobs) {
-            await this.boss.fail(job.id, error)
+          await this.boss.runBeforeFetch(this.queue)
+          const jobs = await this.boss.fetch<T>(this.queue, { batchSize: this.opts.batchSize })
+          if (jobs.length === 0) return
+          const runHandler = async () => {
+            if (this.opts.handlerTimeoutSeconds && this.opts.handlerTimeoutSeconds > 0) {
+              const ac = new AbortController()
+              const timer = setTimeout(() => ac.abort(), this.opts.handlerTimeoutSeconds * 1000)
+              try {
+                await Promise.race([
+                  this.handler(jobs),
+                  new Promise<never>((_, reject) => {
+                    ac.signal.addEventListener('abort', () => reject(new Error(`Handler timed out after ${this.opts.handlerTimeoutSeconds}s on queue "${this.queue}"`)))
+                  }),
+                ])
+              } finally {
+                clearTimeout(timer)
+              }
+            } else {
+              await this.handler(jobs)
+            }
           }
-          this.boss.emit('error', err)
+          try {
+            const start = Date.now()
+            await runHandler()
+            recordProcessingDuration(Date.now() - start, this.queue)
+            for (let i = 0; i < jobs.length; i++) recordJobCompleted(this.queue)
+            await this.boss.complete(jobs.map((j: Job<T>) => j.id))
+            await this.boss.runAfterComplete(jobs)
+          } catch (err) {
+            for (let i = 0; i < jobs.length; i++) recordJobFailed(this.queue)
+            const error = err instanceof Error ? err : new Error(String(err))
+            for (const job of jobs) {
+              await this.boss.fail(job.id, error)
+            }
+            this.boss.emit('error', err)
+          }
         } finally {
           this.inFlight--
           if (this.draining && this.inFlight === 0 && this.drainResolve) {
