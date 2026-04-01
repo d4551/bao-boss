@@ -174,14 +174,18 @@ export class JobOps {
     private readonly options: ManagerOptions,
   ) {}
 
-  async send<T = unknown>(name: string, data?: T, options: SendOptions = {}): Promise<string> {
+  private assertPayloadWithinLimit(data: unknown): void {
     const maxBytes = this.options.maxPayloadBytes
-    if (maxBytes && data !== undefined) {
-      const size = JSON.stringify(data).length
-      if (size > maxBytes) {
-        throw new Error(`Job payload size ${size} bytes exceeds maximum of ${maxBytes} bytes`)
-      }
+    if (!maxBytes || data === undefined) return
+    const json = JSON.stringify(data)
+    const size = new TextEncoder().encode(json).byteLength
+    if (size > maxBytes) {
+      throw new Error(`Job payload size ${size} bytes exceeds maximum of ${maxBytes} bytes`)
     }
+  }
+
+  async send<T = unknown>(name: string, data?: T, options: SendOptions = {}): Promise<string> {
+    this.assertPayloadWithinLimit(data)
     const opts = Value.Decode(sendOptionsSchema, options)
     const queue = await this.prisma.queue.findUnique({ where: { name } })
 
@@ -225,6 +229,7 @@ export class JobOps {
     const ids: string[] = []
     await this.prisma.$transaction(async (tx) => {
       for (const entry of jobs) {
+        this.assertPayloadWithinLimit(entry.data)
         const opts = Value.Decode(sendOptionsSchema, entry.options ?? {})
         const q = await tx.queue.findUnique({ where: { name: entry.name } })
         const created = await tx.job.create({
