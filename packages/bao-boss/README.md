@@ -1,5 +1,6 @@
 # bao-boss
 
+[![npm](https://img.shields.io/npm/v/bao-boss)](https://www.npmjs.com/package/bao-boss)
 [![CI](https://github.com/d4551/bao-boss/actions/workflows/ci.yml/badge.svg)](https://github.com/d4551/bao-boss/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/d4551/bao-boss)](https://github.com/d4551/bao-boss)
 [![Bun](https://img.shields.io/badge/bun-%3E%3D1.2-black?logo=bun)](https://bun.sh)
@@ -46,6 +47,7 @@ import { BaoBoss } from 'bao-boss'
 const boss = new BaoBoss({ connectionString: Bun.env['DATABASE_URL'] })
 await boss.start()
 
+await boss.createQueue('emails-dlq')
 await boss.createQueue('emails', {
   retryLimit: 3,
   retryBackoff: true,
@@ -237,8 +239,8 @@ Per-queue Prometheus metrics with no external collector.
 import { getMetricsSnapshot, getQueueDepths, toPrometheusFormat } from 'bao-boss'
 
 const snapshot = getMetricsSnapshot()
-const depths = await getQueueDepths(boss)
-const text = toPrometheusFormat(snapshot, depths)
+snapshot.queueDepth = await getQueueDepths(boss.prisma)
+const text = toPrometheusFormat(snapshot)
 ```
 
 Labels: `baoboss_jobs_processed_total`, `baoboss_jobs_failed_total`, `baoboss_processing_duration_seconds`, `baoboss_queue_depth{queue}`, and per-queue variants.

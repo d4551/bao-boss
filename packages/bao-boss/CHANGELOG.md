@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1-rc1] - 2026-04-01
+
+### Added
+
+- **Dead letter queue validation**: `createQueue`/`updateQueue` reject non-existent, self-referencing, and circular dead letter queue references
+- **Job payload size validation**: new `maxPayloadBytes` option on `BaoBossOptions` rejects oversized job payloads at send time
+- **Dashboard queue search**: HTMX live search input filters queues by name on the dashboard
+- **Dashboard bulk operations**: `POST /jobs/bulk/retry` and `POST /jobs/bulk/cancel` routes for batch job management
+- **Rate limit response headers**: dashboard rate limiter returns `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
+
+### Fixed
+
+- **DLQ cascade**: dead letter queue jobs now inherit the target queue's `deadLetter` setting, enabling proper cascading through chained DLQ configurations
+- **README**: Quick Start example now creates the DLQ queue before referencing it
+- **README**: Fixed `getQueueDepths` API signature (takes `prisma`, not `boss`)
+
+### Tests
+
+- 23 test files with 143 tests (up from 18 files / 96 tests)
+- **New**: `pubsub.test.ts` — subscribe, publish fan-out, unsubscribe, idempotent subscribe, send options propagation
+- **New**: `cron.test.ts` — `validateCron` accepts/rejects, `describeCron` aliases and patterns
+- **New**: `error-paths.test.ts` — idempotent complete/fail/cancel, no-op resume, null for missing IDs, empty arrays
+- **New**: `singleton-key.test.ts` — storage, independence, lifecycle persistence
+- **New**: `validation-advanced.test.ts` — DLQ self-reference, non-existent DLQ, circular DLQ, payload size limits
+- **Extended**: `dependencies.test.ts` — `getJobDependencies` upstream/downstream queries
+- **Extended**: `maintenance.test.ts` — DLQ cascade through chained dead letter queues
+
 ## [0.1.0] - 2026-03-31
 
 ### Added
