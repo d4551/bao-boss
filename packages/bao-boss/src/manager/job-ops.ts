@@ -10,7 +10,7 @@ import {
   type RawJobRow,
   type ManagerOptions,
 } from './mappers.js'
-import { createDlqJobs, type ExhaustedRow } from './dlq.js'
+import { createDlqJobs, type DlqRow } from './dlq.js'
 
 // ── Helpers for breaking up long functions ────────────────────────
 
@@ -289,9 +289,10 @@ export class JobOps {
 
     await this.prisma.$executeRawUnsafe(retryQuery, output, ...ids)
 
-    const exhausted = await this.prisma.$queryRawUnsafe<ExhaustedRow[]>(failQuery, output, ...ids)
+    type RawExhausted = DlqRow & { deadLetter: string | null }
+    const exhausted = await this.prisma.$queryRawUnsafe<RawExhausted[]>(failQuery, output, ...ids)
 
-    const dlqJobs = exhausted.filter((j) => j.deadLetter)
+    const dlqJobs = exhausted.filter((j): j is DlqRow => j.deadLetter != null)
     if (dlqJobs.length > 0) {
       const jobQueueMap = new Map(jobs.map(j => [j.id, j.queue]))
       await createDlqJobs(
