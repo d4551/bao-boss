@@ -61,18 +61,20 @@ export function scheduleRowHtml(schedule: Schedule, prefix: string, locale: stri
   const created = includeCreated
     ? `<td>${formatDateTime(new Date(schedule.createdOn), locale)}</td>`
     : ''
+  const trashIcon = `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3m-7 0h8"/></svg>`
   return `<tr>
-    <td>${esc(schedule.name)}</td>
-    <td><code>${esc(schedule.cron)}</code></td>
-    <td>${esc(schedule.timezone)}</td>
-    ${created}
     <td>
-      <button class="${UI.touchBtnError}" type="button"
+      <button class="${UI.touchBtnErrorSquare}" type="button"
         aria-label="${t('aria.removeSchedule', locale)} ${esc(schedule.name)}"
+        title="${t('btn.delete', locale)}"
         hx-delete="${prefix}/schedules/${encodeURIComponent(schedule.name)}"
         hx-confirm="${t('confirm.removeSchedule', locale).replace('{name}', esc(schedule.name))}"
-        hx-swap="outerHTML" hx-target="closest tr">${t('btn.delete', locale)}</button>
+        hx-swap="outerHTML" hx-target="closest tr">${trashIcon}</button>
     </td>
+    <td class="whitespace-nowrap">${esc(schedule.name)}</td>
+    <td><code class="whitespace-nowrap text-xs">${esc(schedule.cron)}</code></td>
+    <td class="whitespace-nowrap">${esc(schedule.timezone)}</td>
+    ${created}
   </tr>`
 }
 
@@ -91,11 +93,11 @@ export function schedulesTableHtml(
   return `<div class="${UI.tableWrap}">
     <table class="${UI.table}">
       <thead><tr>
+        <th scope="col">${t('table.actions', locale)}</th>
         <th scope="col">${t('table.name', locale)}</th>
         <th scope="col">${t('table.cron', locale)}</th>
         <th scope="col">${t('table.timezone', locale)}</th>
         ${createdHead}
-        <th scope="col">${t('table.actions', locale)}</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>

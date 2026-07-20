@@ -46,11 +46,16 @@ bao-boss/
 │   │   │   ├── job-queries.ts # Job queries (search, deps, progress)
 │   │   │   └── pubsub.ts     # Pub/Sub operations
 │   │   └── dashboard/        # Decomposed Dashboard modules
+│   │       ├── shell.ts      # Full-page shell + nav SSOT
+│   │       ├── ui.ts         # daisyUI/Tailwind class tokens
+│   │       ├── assets.ts     # Vendored static asset serving
+│   │       ├── bulk.ts       # Bulk body decode (TypeBox)
 │   │       ├── routes.ts     # Route handler functions
 │   │       ├── sse.ts        # SSE progress streaming
 │   │       ├── html.ts       # HTML rendering helpers
 │   │       ├── middleware.ts  # Auth, CSRF, rate limiting
 │   │       └── response.ts   # Response builders
+│   ├── assets/               # Vendored daisyUI/htmx/tailwind (no CDN)
 │   ├── scripts/
 │   │   └── lint.ts           # Project-specific lint
 │   ├── prisma/
@@ -123,8 +128,8 @@ When modifying this codebase:
 - Return `Job<T>` generic types from all job-returning methods.
 - Emit errors via `boss.emit('error', err)` — never swallow errors silently.
 - Use `Bun.sleep` or `setTimeout` for delays, not busy-waiting.
-- Dashboard HTML is inline in Dashboard.ts — no template files.
-- Dashboard: use `t()` from i18n.ts for all user-facing strings; add ARIA attributes (`scope="col"`, `aria-label`, `type="button"`) on tables and buttons.
+- Dashboard HTML is composed in `dashboard/` modules (shell/html/routes) — no template files; no CDN (assets under `packages/bao-boss/assets/`).
+- Dashboard: use `t()` from i18n.ts for all user-facing strings; use `UI` tokens from `dashboard/ui.ts` for classes; add ARIA attributes (`scope="col"`, `aria-label`, `type="button"`) on tables and buttons; primary nav via `navItems()` only.
 - Keep the CLI simple — each command creates a BaoBoss instance, performs one action, then stops.
 - Run `bun run lint` before committing — ensures 0 errors for typecasts, i18n, ARIA, HTMX, file/function length, DRY.
 - No `as unknown`, `as never`, `as any` typecasts — use typed domain mappers in `manager/mappers.ts`.

@@ -243,7 +243,7 @@ const app = new Elysia()
   .listen(3000)
 ```
 
-Routes: queue list (with live search), queue detail, job detail, retry, cancel, bulk retry/cancel, schedules, stats, Prometheus metrics endpoint, SSE progress streaming.
+Routes (full page unless noted): dashboard home, queues (HTMX fragment when `HX-Request`), queue detail (bulk select/retry/cancel), job detail, schedules, stats (fragment when `HX-Request`). Mutations: retry/cancel job, delete schedule, bulk retry/cancel. Machine: `GET …/metrics` Prometheus scrape, `GET …/sse/progress/:id` SSE. Assets served from `…/assets/*` (vendored daisyUI/htmx; no CDN).
 
 ## Metrics
 
