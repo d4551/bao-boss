@@ -63,14 +63,11 @@ export function createRateLimitMiddleware(
       lastCleanup = now
     }
     let entry = rateLimitMap.get(ip)
-    if (entry && now > entry.resetAt) {
-      rateLimitMap.set(ip, { count: 1, resetAt: now + rateLimitOpts.windowMs })
-      entry = rateLimitMap.get(ip)!
-    } else if (entry) {
-      entry.count++
+    if (!entry || now > entry.resetAt) {
+      entry = { count: 1, resetAt: now + rateLimitOpts.windowMs }
+      rateLimitMap.set(ip, entry)
     } else {
-      rateLimitMap.set(ip, { count: 1, resetAt: now + rateLimitOpts.windowMs })
-      entry = rateLimitMap.get(ip)!
+      entry.count++
     }
 
     if (!set.headers) set.headers = {}

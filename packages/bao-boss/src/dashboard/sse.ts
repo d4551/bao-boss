@@ -32,15 +32,24 @@ export async function sseProgress(
         controller.enqueue(encoder.encode(`event: ${event}\ndata: ${data.replace(/\n/g, '\ndata: ')}\n\n`))
       }
 
+      const stop = () => {
+        if (intervalId !== null) {
+          clearInterval(intervalId)
+          intervalId = null
+        }
+      }
+
       send('progress', progressBarHtml(lastProgress, loc))
 
       intervalId = setInterval(async () => {
-        if (closed) { clearInterval(intervalId!); return }
+        if (closed) {
+          stop()
+          return
+        }
         try {
           const j = await boss.getJobById(id)
           if (!j || terminalStates.includes(j.state)) {
-            clearInterval(intervalId!)
-            intervalId = null
+            stop()
             send('close', '{}')
             if (!closed) { closed = true; controller.close() }
             return
@@ -50,16 +59,19 @@ export async function sseProgress(
             lastProgress = p
             send('progress', progressBarHtml(p, loc))
           }
-        } catch {
-          clearInterval(intervalId!)
-          intervalId = null
+        } catch (err) {
+          stop()
+          boss.emit('error', err instanceof Error ? err : new Error(String(err)))
           if (!closed) { closed = true; controller.close() }
         }
       }, 2000)
     },
     cancel() {
       closed = true
-      if (intervalId) { clearInterval(intervalId); intervalId = null }
+      if (intervalId !== null) {
+        clearInterval(intervalId)
+        intervalId = null
+      }
     },
   })
 

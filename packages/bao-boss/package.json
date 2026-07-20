@@ -17,6 +17,7 @@
     "bin",
     "prisma",
     "sql",
+    "assets",
     "CHANGELOG.md",
     "LICENSE"
   ],

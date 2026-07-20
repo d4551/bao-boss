@@ -1,0 +1,30 @@
+/** Canonical daisyUI/Tailwind class tokens for the dashboard. Single owner. */
+export const UI = {
+  body: 'bg-base-100 text-base-content min-h-screen',
+  navbar: 'navbar glass bg-primary/90 text-primary-content px-3 sm:px-4 sticky top-0 z-30 shadow-sm',
+  navLink: 'btn btn-ghost min-h-11 h-11 px-3',
+  drawerToggle: 'btn btn-ghost btn-square min-h-11 h-11 w-11 lg:hidden',
+  drawerSide: 'menu bg-base-200 text-base-content min-h-full w-72 p-4 gap-1',
+  main: 'max-w-6xl mx-auto p-4 sm:p-6 lg:p-8 w-full',
+  card: 'card glass bg-base-200/80 shadow-sm mb-6',
+  cardBody: 'card-body',
+  cardTitle: 'card-title text-lg font-semibold mb-4',
+  cardTitleSm: 'card-title text-base font-semibold mb-4',
+  pageTitle: 'text-xl font-semibold mb-4',
+  tableWrap: 'overflow-x-auto',
+  table: 'table table-zebra',
+  tableSm: 'table table-zebra table-sm',
+  stats: 'stats stats-vertical lg:stats-horizontal shadow mb-6 w-full',
+  touchBtn: 'btn min-h-11 h-11',
+  touchBtnPrimary: 'btn btn-primary min-h-11 h-11',
+  touchBtnError: 'btn btn-error min-h-11 h-11',
+  touchBtnGhost: 'btn btn-ghost min-h-11 h-11',
+  searchInput: 'input input-bordered min-h-11 h-11 mb-4 w-full max-w-md',
+  checkbox: 'checkbox checkbox-primary min-h-5 min-w-5',
+  bulkBar: 'flex flex-wrap items-center gap-2 mb-4',
+  pre: 'bg-base-300 p-4 rounded-box overflow-x-auto text-sm',
+  empty: 'text-center p-8 text-base-content/70',
+  metricsHint: 'text-sm text-base-content/70 mt-2',
+} as const
+
+export type UiToken = keyof typeof UI

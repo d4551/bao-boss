@@ -87,9 +87,9 @@ const LINE_RULES: Array<{
     exclude: /\.test\./,
   },
   {
-    pattern: /<table(?![^>]*role=)(?![^>]*class="table)/,
+    pattern: /<table(?![^>]*role=)(?![^>]*class="table)(?![^>]*\$\{UI\.table)/,
     rule: 'aria-table-role',
-    message: '<table> without DaisyUI table class or explicit role',
+    message: '<table> without DaisyUI table class, UI.table token, or explicit role',
     severity: 'error',
     exclude: /\.test\./,
   },
@@ -119,6 +119,27 @@ const LINE_RULES: Array<{
     message: '<style> tag — use Tailwind/DaisyUI classes instead',
     severity: 'error',
     exclude: /\.test\./,
+  },
+  {
+    pattern: /cdn\.jsdelivr\.net|unpkg\.com|cdnjs\.cloudflare\.com/,
+    rule: 'no-cdn',
+    message: 'CDN URL — vendor assets under packages/bao-boss/assets and serve via /assets',
+    severity: 'error',
+    exclude: /\.test\./,
+  },
+  {
+    pattern: /btn-sm\b/,
+    rule: 'no-btn-sm',
+    message: 'btn-sm undersized for touch — use UI.touchBtn tokens (min-h-11)',
+    severity: 'error',
+    exclude: /\.test\.|ui\.ts/,
+  },
+  {
+    pattern: /max-w-\[[^\]]+\]/,
+    rule: 'no-magic-max-w',
+    message: 'Magic max-w-[…] — use UI.main / Tailwind scale tokens (max-w-6xl)',
+    severity: 'error',
+    exclude: /\.test\.|ui\.ts/,
   },
 
   // Complexity markers
