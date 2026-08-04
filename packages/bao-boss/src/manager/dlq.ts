@@ -1,7 +1,16 @@
 import { Prisma, PrismaClient } from '../generated/prisma/client.js'
+import { DLQ_JOB_RETRY, JOB_DEFAULTS, daysFromNow } from '../defaults.js'
+import { toJsonInput } from './mappers.js'
 
+/**
+ * A job that has exhausted its retries and carries a dead-letter target.
+ *
+ * `queue` is the queue the job actually failed in — it is copied onto the
+ * dead-letter event so operators can trace an entry back to its origin.
+ */
 export interface DlqRow {
   id: string
+  queue: string
   deadLetter: string
   data: unknown
   priority: number
@@ -9,55 +18,59 @@ export interface DlqRow {
   singletonKey: string | null
 }
 
+interface DlqEvent {
+  jobId: string
+  queue: string
+  deadLetter: string
+}
+
 function buildDlqJobCreateData(
-  j: DlqRow,
-  dlqQueueMap: Map<string, { deadLetter: string | null }>,
-  keepUntil: Date,
-) {
-  const targetQueue = dlqQueueMap.get(j.deadLetter)
+  row: DlqRow,
+  targets: Map<string, { deadLetter: string | null; retentionDays: number }>,
+  fallbackRetentionDays: number,
+): Prisma.JobCreateManyInput {
+  const target = targets.get(row.deadLetter)
   return {
-    queue: j.deadLetter,
-    data: j.data as Prisma.InputJsonValue,
-    priority: j.priority,
-    retryLimit: 0,
-    retryCount: 0,
-    retryDelay: 0,
-    retryBackoff: false,
-    expireIn: j.expireIn,
-    singletonKey: j.singletonKey,
-    deadLetter: targetQueue?.deadLetter ?? null,
-    policy: 'standard',
-    keepUntil,
+    queue: row.deadLetter,
+    data: row.data === undefined ? Prisma.JsonNull : toJsonInput(row.data),
+    priority: row.priority,
+    ...DLQ_JOB_RETRY,
+    expireIn: row.expireIn,
+    // The dead-letter copy is a distinct job; carrying the source singleton key
+    // would let one poisoned key block every later copy on the same index.
+    singletonKey: null,
+    deadLetter: target?.deadLetter ?? null,
+    policy: JOB_DEFAULTS.policy,
+    keepUntil: daysFromNow(target?.retentionDays ?? fallbackRetentionDays),
   }
 }
 
+/**
+ * Copy exhausted jobs into their dead-letter queues.
+ *
+ * One `createMany` for the whole batch: either every dead-letter copy lands or
+ * none does, so a partial failure cannot leave some failures traceable and
+ * others silently gone.
+ */
 export async function createDlqJobs(
   prisma: PrismaClient,
   dlqJobs: DlqRow[],
-  jobQueueMap: Map<string, string>,
-  dlqRetentionDays: number,
-  onDlq?: (payload: { jobId: string; queue: string; deadLetter: string }) => void,
-  onRowError?: (err: unknown) => void,
+  fallbackRetentionDays: number,
+  onDlq?: (event: DlqEvent) => void,
 ): Promise<void> {
-  const keepUntil = new Date(Date.now() + dlqRetentionDays * 24 * 60 * 60 * 1000)
-  const dlqNames = [...new Set(dlqJobs.map(j => j.deadLetter))]
-  const dlqQueues = await prisma.queue.findMany({ where: { name: { in: dlqNames } } })
-  const dlqQueueMap = new Map(dlqQueues.map(q => [q.name, q]))
-  if (onRowError) {
-    for (const j of dlqJobs) {
-      try {
-        await prisma.job.create({ data: buildDlqJobCreateData(j, dlqQueueMap, keepUntil) })
-        onDlq?.({ jobId: j.id, queue: jobQueueMap.get(j.id) ?? 'unknown', deadLetter: j.deadLetter })
-      } catch (err) {
-        onRowError(err)
-      }
-    }
-  } else {
-    await prisma.job.createMany({
-      data: dlqJobs.map((j) => buildDlqJobCreateData(j, dlqQueueMap, keepUntil)),
-    })
-    for (const j of dlqJobs) {
-      onDlq?.({ jobId: j.id, queue: jobQueueMap.get(j.id) ?? 'unknown', deadLetter: j.deadLetter })
-    }
+  if (dlqJobs.length === 0) return
+  const names = [...new Set(dlqJobs.map(row => row.deadLetter))]
+  const targetRows = await prisma.queue.findMany({
+    where: { name: { in: names } },
+    select: { name: true, deadLetter: true, retentionDays: true },
+  })
+  const targets = new Map(targetRows.map(row => [row.name, row]))
+
+  await prisma.job.createMany({
+    data: dlqJobs.map(row => buildDlqJobCreateData(row, targets, fallbackRetentionDays)),
+  })
+
+  for (const row of dlqJobs) {
+    onDlq?.({ jobId: row.id, queue: row.queue, deadLetter: row.deadLetter })
   }
 }

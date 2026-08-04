@@ -16,7 +16,7 @@
     "src",
     "bin",
     "prisma",
-    "sql",
+    "prisma.config.ts",
     "assets",
     "CHANGELOG.md",
     "LICENSE"
@@ -30,7 +30,9 @@
     "lint": "bun run scripts/lint.ts",
     "test": "bun test",
     "db:generate": "bunx prisma generate",
-    "db:migrate": "bunx prisma migrate deploy"
+    "db:migrate": "bunx prisma migrate deploy",
+    "typecheck": "tsc --noEmit",
+    "validate:all": "bun run typecheck && bun run lint && bun test"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.4.2",

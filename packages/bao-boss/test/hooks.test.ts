@@ -2,9 +2,7 @@ import { describe, it, expect, afterAll } from 'bun:test'
 import { BaoBoss } from '../src/BaoBoss'
 import { uniqueName, waitFor, createTestBoss, cleanupQueue } from './helpers'
 
-const skip = !Bun.env['DATABASE_URL']
-
-describe.skipIf(skip)('Lifecycle hooks', () => {
+describe('Lifecycle hooks', () => {
   const instances: BaoBoss[] = []
 
   afterAll(async () => {

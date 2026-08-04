@@ -1,3 +1,5 @@
+import type { PrismaClient } from './generated/prisma/client.js'
+
 export type JobState = 'created' | 'active' | 'completed' | 'cancelled' | 'failed'
 export type QueuePolicy = 'standard' | 'short' | 'singleton' | 'stately'
 
@@ -75,9 +77,16 @@ export interface SendOptions {
 }
 
 export interface WorkOptions {
+  /** Jobs claimed per fetch. Default 1. */
   batchSize?: number
+  /** Seconds between fetch attempts. Default 2. */
   pollingIntervalSeconds?: number
+  /** Batches this worker may process at once. Default 1. */
   maxConcurrency?: number
+  /**
+   * Seconds a handler may run before its `AbortSignal` fires and the batch is
+   * failed. Handlers that ignore the signal keep running, so honour it.
+   */
   handlerTimeoutSeconds?: number
 }
 
@@ -98,6 +107,7 @@ export interface CreateQueueOptions {
 export interface JobSearchOptions {
   queue?: string
   state?: JobState | JobState[]
+  /** Page size. Capped at `SEARCH_LIMIT_MAX`; defaults to `SEARCH_LIMIT_DEFAULT`. */
   limit?: number
   offset?: number
   sortBy?: 'createdOn' | 'priority' | 'startAfter'
@@ -110,7 +120,7 @@ export interface BetterAuthSessionApi {
 
 export interface BaoBossOptions {
   connectionString?: string
-  prisma?: import('./generated/prisma/client.js').PrismaClient
+  prisma?: PrismaClient
   schema?: string
   maintenanceIntervalSeconds?: number
   archiveCompletedAfterSeconds?: number

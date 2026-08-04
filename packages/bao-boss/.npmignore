@@ -3,6 +3,5 @@ test/
 scripts/
 tsconfig.json
 bunfig.toml
-prisma.config.ts
 .gitignore
 *.tgz

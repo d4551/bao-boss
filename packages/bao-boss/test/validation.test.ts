@@ -2,9 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import { BaoBoss } from '../src/BaoBoss'
 import { uniqueName, createTestBoss, cleanupQueue } from './helpers'
 
-const skip = !Bun.env['DATABASE_URL']
-
-describe.skipIf(skip)('Validation', () => {
+describe('Validation', () => {
   let boss: BaoBoss
 
   beforeAll(async () => {
@@ -35,7 +33,7 @@ describe.skipIf(skip)('Validation', () => {
 
   it('cron with out-of-range value throws', async () => {
     const name = uniqueName('val-cron-range')
-    await expect(boss.schedule(name, '60 * * * *')).rejects.toThrow('out of range')
+    await expect(boss.schedule(name, '60 * * * *')).rejects.toThrow('outside 0-59')
   })
 
   it('cron aliases accepted', async () => {

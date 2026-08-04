@@ -1,0 +1,140 @@
+/*!
+ * bao-boss dashboard tokens — the only stylesheet this project authors.
+ *
+ * daisyUI owns colour, radius and component styling; this file owns the few
+ * things it does not provide: the z-index scale, safe-area insets, the glass
+ * surface's per-theme parameters and its degradation paths. Everything lives in
+ * @layer utilities so it wins over daisyUI components by layer order — no
+ * !important is needed or used anywhere in this project.
+ */
+
+@layer utilities {
+  :root {
+    /* Stacking order. Every z-index in the dashboard comes from this scale. */
+    --bao-z-base: 0;
+    --bao-z-sticky: 20;
+    --bao-z-nav: 30;
+    --bao-z-drawer: 40;
+    --bao-z-overlay: 50;
+
+    /* Safe-area insets, zero on hardware without a display cutout. */
+    --bao-safe-top: env(safe-area-inset-top, 0px);
+    --bao-safe-right: env(safe-area-inset-right, 0px);
+    --bao-safe-bottom: env(safe-area-inset-bottom, 0px);
+    --bao-safe-left: env(safe-area-inset-left, 0px);
+
+    /* Glass parameters. Light and dark need different alpha to hold contrast. */
+    --bao-glass-blur: 12px;
+    --bao-glass-saturate: 140%;
+    --bao-glass-tint: color-mix(in oklch, var(--color-primary) 88%, transparent);
+    --bao-glass-border: color-mix(in oklch, var(--color-primary-content) 18%, transparent);
+  }
+
+  [data-theme='dark'] {
+    --bao-glass-blur: 14px;
+    --bao-glass-saturate: 120%;
+    --bao-glass-tint: color-mix(in oklch, var(--color-primary) 82%, transparent);
+    --bao-glass-border: color-mix(in oklch, var(--color-primary-content) 26%, transparent);
+  }
+
+  /* ── Stacking ──────────────────────────────────────────────────── */
+
+  .bao-z-nav { z-index: var(--bao-z-nav); }
+  .bao-z-drawer { z-index: var(--bao-z-drawer); }
+
+  /* ── Safe area ─────────────────────────────────────────────────── */
+
+  .bao-inset-safe {
+    padding-inline-start: var(--bao-safe-left);
+    padding-inline-end: var(--bao-safe-right);
+  }
+
+  .bao-inset-safe-top { padding-block-start: var(--bao-safe-top); }
+  .bao-inset-safe-bottom { padding-block-end: var(--bao-safe-bottom); }
+
+  /* ── Glass surface ─────────────────────────────────────────────────
+   * Chrome only — never a reading surface. The opaque tint is the base so
+   * every fallback path below stays legible on its own; the blur is an
+   * enhancement layered on top where it is both supported and welcome.
+   */
+
+  .bao-glass {
+    background-color: var(--bao-glass-tint);
+    border-block-end: 1px solid var(--bao-glass-border);
+  }
+
+  @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+    .bao-glass {
+      -webkit-backdrop-filter: blur(var(--bao-glass-blur)) saturate(var(--bao-glass-saturate));
+      backdrop-filter: blur(var(--bao-glass-blur)) saturate(var(--bao-glass-saturate));
+    }
+  }
+
+  /* A viewer who asked for less transparency gets the solid token surface. */
+  @media (prefers-reduced-transparency: reduce) {
+    .bao-glass {
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+      background-color: var(--color-primary);
+    }
+  }
+
+  /* Forced colours: drop the effect entirely and keep a system-drawn edge. */
+  @media (forced-colors: active) {
+    .bao-glass {
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+      background-color: Canvas;
+      border-block-end: 1px solid CanvasText;
+    }
+  }
+
+  /* ── Layout ────────────────────────────────────────────────────── */
+
+  /* Dynamic viewport height: 100vh is wrong under a mobile browser's
+   * collapsing toolbar, which clips the last row of every list. */
+  .bao-min-h-dvh { min-block-size: 100dvh; }
+
+  /* Container-query context for panels that adapt to their own width rather
+   * than to the viewport, so a panel behaves the same in any slot. */
+  .bao-panel { container-type: inline-size; }
+
+  /* Content-driven columns: as many as fit, never a hardcoded count. */
+  .bao-autofit {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+    gap: var(--bao-gap, 1rem);
+  }
+
+  /* A flex or grid child will not shrink below its content without this, so
+   * ellipsis never fires and the row scrolls the page sideways instead. */
+  .bao-min-w-0 { min-inline-size: 0; }
+
+  /* Reserve the scrollbar so showing one does not shift the whole layout. */
+  .bao-stable-gutter { scrollbar-gutter: stable; }
+
+  /* A sticky header would otherwise cover the element an in-page anchor
+   * scrolls to. */
+  .bao-scroll-offset { scroll-margin-block-start: 5rem; }
+
+  /* ── Data ──────────────────────────────────────────────────────── */
+
+  /* Digits share a width so figures line up column to column. */
+  .bao-numeric {
+    font-variant-numeric: tabular-nums;
+    text-align: end;
+  }
+
+  /* Identifiers are for copying: wrap them instead of truncating to an
+   * ellipsis that silently destroys the value. */
+  .bao-id {
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+
+  /* ── Motion ────────────────────────────────────────────────────── */
+
+  @media (prefers-reduced-motion: reduce) {
+    .bao-motion-safe { transition: none; animation: none; }
+  }
+}

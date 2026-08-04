@@ -1,27 +1,42 @@
 /**
- * Minimal 5-field cron parser and validator.
+ * 5-field cron grammar — the single owner.
  *
- * Supported syntax per field:
- *   *          matches any value
+ * `parseCronFields` is the only parser. Validation, matching and description all
+ * consume its output, so a cron expression can never be accepted by one and
+ * misread by another.
+ *
+ * Field syntax (Vixie/POSIX compatible):
+ *   *          any value
  *   N          exact value
- *   N,M,...    comma-separated list
- *   N-M        inclusive range
- *   *\/N       step from 0 (every N)
- *   N\/M       step from N (N, N+M, … while in range)
+ *   NAME       month (jan…dec) or day-of-week (sun…sat) name
+ *   A-B        inclusive range
+ *   A,B,…      list of any of the above (each element parsed independently)
+ *   *\/S       every S from the start of the field's range
+ *   A-B/S      every S within the range
+ *   A/S        every S from A to the end of the field's range
  *
- * Supports aliases: @yearly, @monthly, @weekly, @daily, @hourly
+ * Aliases: @yearly @annually @monthly @weekly @daily @midnight @hourly
  */
 
-const FIELD_NAMES = ['minute', 'hour', 'day-of-month', 'month', 'day-of-week'] as const
-const FIELD_RANGES: Array<[number, number]> = [
-  [0, 59],  // minute
-  [0, 23],  // hour
-  [1, 31],  // day-of-month
-  [1, 12],  // month
-  [0, 6],   // day-of-week
-]
+export const CRON_FIELD_COUNT = 5
 
-const ALIASES: Record<string, string> = {
+export type CronFieldIndex = 0 | 1 | 2 | 3 | 4
+
+export const CRON_FIELD_NAMES = ['minute', 'hour', 'day-of-month', 'month', 'day-of-week'] as const
+
+/** Inclusive [min, max] per field. Day-of-week accepts 7 as a second spelling of Sunday. */
+const FIELD_RANGES = [
+  [0, 59],
+  [0, 23],
+  [1, 31],
+  [1, 12],
+  [0, 7],
+] as const satisfies { readonly [K in CronFieldIndex]: readonly [number, number] }
+
+const MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'] as const
+const DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const
+
+const ALIASES: Readonly<Record<string, string>> = {
   '@yearly': '0 0 1 1 *',
   '@annually': '0 0 1 1 *',
   '@monthly': '0 0 1 * *',
@@ -31,167 +46,176 @@ const ALIASES: Record<string, string> = {
   '@hourly': '0 * * * *',
 }
 
-function resolveAliases(cron: string): string {
-  const trimmed = cron.trim().toLowerCase()
-  return ALIASES[trimmed] ?? cron.trim()
+/** One comma-separated element of a field. `step` of 1 means "every value in [start, end]". */
+export interface CronTerm {
+  start: number
+  end: number
+  step: number
+  /** True when the source text was `*` (with or without a step) — kept for description. */
+  wildcard: boolean
 }
 
-function validateField(field: string, index: number): void {
-  const [min, max] = FIELD_RANGES[index]!
-  const name = FIELD_NAMES[index]!
+export interface CronField {
+  index: CronFieldIndex
+  terms: CronTerm[]
+  /** True when the field matches every value, i.e. a bare `*`. */
+  always: boolean
+}
 
-  if (field === '*') return
+export type CronFields = readonly [CronField, CronField, CronField, CronField, CronField]
 
-  // Step: */N or N/N
-  if (field.includes('/')) {
-    const [base, stepStr] = field.split('/')
-    if (base !== '*') {
-      const baseNum = parseInt(base!, 10)
-      if (isNaN(baseNum) || baseNum < min! || baseNum > max!) {
-        throw new Error(`Invalid cron field '${field}' at position ${index} (${name}): base value ${base} out of range ${min}-${max}`)
-      }
-    }
-    const step = parseInt(stepStr!, 10)
-    if (isNaN(step) || step < 1) {
-      throw new Error(`Invalid cron field '${field}' at position ${index} (${name}): step must be a positive integer`)
-    }
-    return
+function fieldError(field: string, index: number, detail: string): Error {
+  return new Error(
+    `Invalid cron field '${field}' at position ${index} (${CRON_FIELD_NAMES[index]}): ${detail}`,
+  )
+}
+
+function range(index: CronFieldIndex): readonly [number, number] {
+  return FIELD_RANGES[index]
+}
+
+/** Parse one value: a number, or a month/day name for fields 3 and 4. */
+function parseValue(token: string, index: CronFieldIndex, field: string): number {
+  const lower = token.toLowerCase()
+  if (index === 3) {
+    const month = MONTH_NAMES.indexOf(lower as (typeof MONTH_NAMES)[number])
+    if (month >= 0) return month + 1
+  }
+  if (index === 4) {
+    const day = DAY_NAMES.indexOf(lower as (typeof DAY_NAMES)[number])
+    if (day >= 0) return day
+  }
+  if (!/^\d+$/.test(token)) {
+    throw fieldError(field, index, `'${token}' is not a number${index >= 3 ? ' or a valid name' : ''}`)
+  }
+  const value = Number(token)
+  const [min, max] = range(index)
+  if (value < min || value > max) {
+    throw fieldError(field, index, `value ${value} is outside ${min}-${max}`)
+  }
+  return value
+}
+
+function parseTerm(term: string, index: CronFieldIndex, field: string): CronTerm {
+  const [spec, stepText, ...extra] = term.split('/')
+  if (extra.length > 0 || spec === undefined) {
+    throw fieldError(field, index, `'${term}' has more than one step separator`)
   }
 
-  // List: N,M,...
-  if (field.includes(',')) {
-    for (const part of field.split(',')) {
-      validateField(part, index)
+  let step = 1
+  if (stepText !== undefined) {
+    if (!/^\d+$/.test(stepText) || Number(stepText) < 1) {
+      throw fieldError(field, index, `step '${stepText}' must be a positive integer`)
     }
-    return
+    step = Number(stepText)
   }
 
-  // Range: N-M
-  if (field.includes('-')) {
-    const [startStr, endStr] = field.split('-')
-    const start = parseInt(startStr!, 10)
-    const end = parseInt(endStr!, 10)
-    if (isNaN(start) || isNaN(end)) {
-      throw new Error(`Invalid cron field '${field}' at position ${index} (${name}): range values must be integers`)
-    }
-    if (start < min! || start > max! || end < min! || end > max!) {
-      throw new Error(`Invalid cron field '${field}' at position ${index} (${name}): range ${start}-${end} out of bounds ${min}-${max}`)
-    }
+  const [min, max] = range(index)
+  if (spec === '*') {
+    return { start: min, end: max, step, wildcard: true }
+  }
+
+  // A range is only a range when the '-' separates two operands; a leading '-'
+  // is a malformed value, not a range with an empty start.
+  const dash = spec.indexOf('-', 1)
+  if (dash > 0) {
+    const start = parseValue(spec.slice(0, dash), index, field)
+    const end = parseValue(spec.slice(dash + 1), index, field)
     if (start > end) {
-      throw new Error(`Invalid cron field '${field}' at position ${index} (${name}): range start ${start} is greater than end ${end}`)
+      throw fieldError(field, index, `range start ${start} is greater than end ${end}`)
     }
-    return
+    return { start, end, step, wildcard: false }
   }
 
-  // Exact value
-  const val = parseInt(field, 10)
-  if (isNaN(val) || val < min! || val > max!) {
-    throw new Error(`Invalid cron field '${field}' at position ${index} (${name}): value ${field} out of range ${min}-${max}`)
-  }
+  const value = parseValue(spec, index, field)
+  // `N/S` steps from N to the end of the field; a bare `N` is that value alone.
+  return { start: value, end: stepText === undefined ? value : max, step, wildcard: false }
 }
 
-/** Validate a cron expression. Throws a descriptive error if invalid. */
+function parseField(field: string, index: CronFieldIndex): CronField {
+  if (field.length === 0) {
+    throw fieldError(field, index, 'field is empty')
+  }
+  // Split on ',' first so every element — including ranges and steps — is parsed
+  // as a whole term. Splitting on '/' or '-' first silently truncates `1-5,10`.
+  const terms = field.split(',').map(term => parseTerm(term, index, field))
+  const [min, max] = range(index)
+  const always = terms.some(t => t.start <= min && t.end >= max && t.step === 1)
+  return { index, terms, always }
+}
+
+/** Expand `@daily`-style aliases and normalise whitespace. */
+export function resolveCronAliases(cron: string): string {
+  const trimmed = cron.trim()
+  return ALIASES[trimmed.toLowerCase()] ?? trimmed
+}
+
+/**
+ * Parse a cron expression into its five fields.
+ * Throws a descriptive `Error` for any expression this implementation cannot execute.
+ */
+export function parseCronFields(cron: string): CronFields {
+  const resolved = resolveCronAliases(cron)
+  if (resolved.length === 0) {
+    throw new Error(`Invalid cron expression '${cron}': expression is empty`)
+  }
+  const parts = resolved.split(/\s+/)
+  if (parts.length !== CRON_FIELD_COUNT) {
+    throw new Error(
+      `Invalid cron expression '${cron}': expected ${CRON_FIELD_COUNT} fields ` +
+      `(${CRON_FIELD_NAMES.join(' ')}), got ${parts.length}`,
+    )
+  }
+  const [minute, hour, dayOfMonth, month, dayOfWeek] = parts
+  return [
+    parseField(minute ?? '', 0),
+    parseField(hour ?? '', 1),
+    parseField(dayOfMonth ?? '', 2),
+    parseField(month ?? '', 3),
+    parseField(dayOfWeek ?? '', 4),
+  ]
+}
+
+/** Validate a cron expression. Throws a descriptive error if it is invalid. */
 export function validateCron(cron: string): void {
-  const resolved = resolveAliases(cron)
-  const parts = resolved.split(/\s+/)
-  if (parts.length !== 5) {
-    throw new Error(`Invalid cron expression '${cron}': expected 5 fields (minute hour day-of-month month day-of-week), got ${parts.length}`)
-  }
-  for (let i = 0; i < 5; i++) {
-    validateField(parts[i]!, i)
-  }
+  parseCronFields(cron)
 }
 
-function matchesPart(part: string, value: number): boolean {
-  if (part === '*') return true
-  if (part.includes('/')) {
-    const [base, stepStr] = part.split('/')
-    const step = parseInt(stepStr ?? '1', 10)
-    if (base === '*') return value % step === 0
-    const baseNum = parseInt(base ?? '', 10)
-    if (isNaN(baseNum)) return false
-    return value >= baseNum && (value - baseNum) % step === 0
-  }
-  if (part.includes(',')) {
-    return part.split(',').some(p => parseInt(p, 10) === value)
-  }
-  if (part.includes('-')) {
-    const [startStr, endStr] = part.split('-')
-    const start = parseInt(startStr ?? '0', 10)
-    const end = parseInt(endStr ?? '0', 10)
-    return value >= start && value <= end
-  }
-  return parseInt(part, 10) === value
+function termMatches(term: CronTerm, value: number): boolean {
+  if (value < term.start || value > term.end) return false
+  return (value - term.start) % term.step === 0
 }
 
-/** Parse a cron expression into a matcher function. */
+function fieldMatches(field: CronField, value: number): boolean {
+  return field.terms.some(term => termMatches(term, value))
+}
+
+/**
+ * Build a matcher for a cron expression.
+ *
+ * Throws on an invalid expression — a schedule that can never fire is a
+ * configuration error, not a silently inert matcher.
+ *
+ * The matcher reads the calendar fields of the supplied date as-is; callers
+ * pass a date already resolved into the schedule's timezone.
+ */
 export function parseCron(cron: string): (date: Date) => boolean {
-  const resolved = resolveAliases(cron)
-  const parts = resolved.split(/\s+/)
-  if (parts.length !== 5) return () => false
-  const [min, hour, dom, month, dow] = parts as [string, string, string, string, string]
+  const [minute, hour, dayOfMonth, month, dayOfWeek] = parseCronFields(cron)
 
   return (date: Date) => {
-    return (
-      matchesPart(min, date.getMinutes()) &&
-      matchesPart(hour, date.getHours()) &&
-      matchesPart(dom, date.getDate()) &&
-      matchesPart(month, date.getMonth() + 1) &&
-      matchesPart(dow, date.getDay())
-    )
+    if (!fieldMatches(minute, date.getMinutes())) return false
+    if (!fieldMatches(hour, date.getHours())) return false
+    if (!fieldMatches(month, date.getMonth() + 1)) return false
+
+    const dow = date.getDay()
+    // 7 and 0 both mean Sunday, so a field written `7` must match `getDay() === 0`.
+    const dowHit = fieldMatches(dayOfWeek, dow) || (dow === 0 && fieldMatches(dayOfWeek, 7))
+    const domHit = fieldMatches(dayOfMonth, date.getDate())
+
+    // Vixie cron: when both day fields are restricted the job runs when *either*
+    // matches; when only one is restricted that one decides.
+    if (dayOfMonth.always) return dowHit
+    if (dayOfWeek.always) return domHit
+    return domHit || dowHit
   }
-}
-
-/** Return a human-readable description of a cron expression. */
-export function describeCron(cron: string): string {
-  const trimmed = cron.trim().toLowerCase()
-  if (trimmed === '@yearly' || trimmed === '@annually') return 'Once a year (Jan 1 at midnight)'
-  if (trimmed === '@monthly') return 'Once a month (1st at midnight)'
-  if (trimmed === '@weekly') return 'Once a week (Sunday at midnight)'
-  if (trimmed === '@daily' || trimmed === '@midnight') return 'Once a day (at midnight)'
-  if (trimmed === '@hourly') return 'Once an hour (at minute 0)'
-
-  const resolved = resolveAliases(cron)
-  const parts = resolved.split(/\s+/)
-  if (parts.length !== 5) return cron
-
-  const [min, hour, dom, month, dow] = parts as [string, string, string, string, string]
-
-  const segments: string[] = []
-
-  // Minute
-  if (min === '*') segments.push('every minute')
-  else if (min.includes('/')) segments.push(`every ${min.split('/')[1]} minutes`)
-  else segments.push(`at minute ${min}`)
-
-  // Hour
-  if (hour === '*') { /* already covered */ }
-  else if (hour.includes('/')) segments.push(`every ${hour.split('/')[1]} hours`)
-  else segments.push(`at hour ${hour}`)
-
-  // Day of month
-  if (dom !== '*') segments.push(`on day ${dom}`)
-
-  // Month
-  if (month !== '*') {
-    const months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-    const monthNum = parseInt(month, 10)
-    const monthIsPlainInteger = !isNaN(monthNum) && String(monthNum) === month
-    segments.push(
-      monthIsPlainInteger && months[monthNum]
-        ? `in ${months[monthNum]!}`
-        : `in month ${month}`,
-    )
-  }
-
-  // Day of week
-  if (dow !== '*') {
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-    const dayNum = parseInt(dow, 10)
-    const dowIsPlainInteger = !isNaN(dayNum) && String(dayNum) === dow
-    if (dowIsPlainInteger && days[dayNum]) segments.push(`on ${days[dayNum]}`)
-    else segments.push(`on day-of-week ${dow}`)
-  }
-
-  return segments.join(', ')
 }

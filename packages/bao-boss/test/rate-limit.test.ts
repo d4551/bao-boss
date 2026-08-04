@@ -1,10 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import { BaoBoss } from '../src/BaoBoss'
-import { uniqueName, waitFor, createTestBoss, cleanupQueue } from './helpers'
+import { uniqueName, waitFor, createTestBoss, cleanupQueue  } from './helpers'
 
-const skip = !Bun.env['DATABASE_URL']
-
-describe.skipIf(skip)('Rate Limiting', () => {
+describe('Rate Limiting', () => {
   let boss: BaoBoss
 
   beforeAll(async () => {
@@ -51,11 +49,13 @@ describe.skipIf(skip)('Rate Limiting', () => {
     const batch2 = await boss.fetch(qname, { batchSize: 1 })
     expect(batch2).toHaveLength(0)
 
-    // Wait for the period to expire
-    await Bun.sleep(1500)
-
-    // Now fetch should succeed
-    const batch3 = await boss.fetch(qname, { batchSize: 1 })
+    // The window reopens on its own; poll the thing it gates rather than
+    // guessing how long the clock takes.
+    let batch3: typeof batch1 = []
+    await waitFor(async () => {
+      batch3 = await boss.fetch(qname, { batchSize: 1 })
+      return batch3.length === 1
+    }, 5000)
     expect(batch3).toHaveLength(1)
 
     await boss.complete([...batch1, ...batch3].map(j => j.id))

@@ -3,9 +3,7 @@ import { BaoBoss } from '../src/BaoBoss'
 import { uniqueName, createTestBoss, cleanupQueue } from './helpers'
 import type { Job } from '../src/types'
 
-const skip = !Bun.env['DATABASE_URL']
-
-describe.skipIf(skip)('Fairness', () => {
+describe('Fairness', () => {
   let boss: BaoBoss
 
   beforeAll(async () => {

@@ -1,7 +1,8 @@
 import { PrismaClient } from './generated/prisma/client.js'
-import type { Job, Queue, CreateQueueOptions, SendOptions } from './types.js'
-import type { JobSearchOptions } from './types.js'
-import { validateSchema, type ManagerOptions } from './manager/mappers.js'
+import type { Job, JobSearchOptions, JobState, Queue, CreateQueueOptions, SendOptions } from './types.js'
+import { validateSchema } from './schema.js'
+import { BOSS_DEFAULTS } from './defaults.js'
+import type { ManagerOptions } from './manager/mappers.js'
 import { QueueOps } from './manager/queue-ops.js'
 import { JobOps } from './manager/job-ops.js'
 import { JobQueries } from './manager/job-queries.js'
@@ -20,7 +21,7 @@ export class Manager {
     options: ManagerOptions & { schema?: string } = {}
   ) {
     const { schema, ...opts } = options
-    const validatedSchema = validateSchema(schema ?? 'baoboss')
+    const validatedSchema = validateSchema(schema ?? BOSS_DEFAULTS.schema)
     this.queueOps = new QueueOps(prisma)
     this.jobOps = new JobOps(prisma, validatedSchema, opts)
     this.jobQueries = new JobQueries(prisma)
@@ -61,8 +62,12 @@ export class Manager {
     return this.queueOps.getQueues()
   }
 
-  getQueueSize(queue: string, options?: { before?: string }): Promise<number> {
+  getQueueSize(queue: string, options?: { before?: JobState }): Promise<number> {
     return this.queueOps.getQueueSize(queue, options)
+  }
+
+  getQueueSizes(queues: readonly string[]): Promise<Map<string, number>> {
+    return this.queueOps.getQueueSizes(queues)
   }
 
   // ── Job operations ────────────────────────────────────────────────
@@ -111,7 +116,7 @@ export class Manager {
     return this.jobQueries.getJobDependencies<T>(jobId)
   }
 
-  progress(id: string, value: number): Promise<void> {
+  progress(id: string, value: number): Promise<boolean> {
     return this.jobQueries.progress(id, value)
   }
 

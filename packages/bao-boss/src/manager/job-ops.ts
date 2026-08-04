@@ -1,118 +1,27 @@
-import { PrismaClient, Prisma } from '../generated/prisma/client.js'
-import { Value } from '@sinclair/typebox/value'
+import { PrismaClient } from '../generated/prisma/client.js'
 import type { Job, SendOptions } from '../types.js'
-import {
-  sendOptionsSchema,
-  resolveStartAfter,
-  toDomainJob,
-  rawRowToDomainJob,
-  toJsonValue,
-  type RawJobRow,
-  type ManagerOptions,
-} from './mappers.js'
+import { DLQ_RETENTION_DAYS, secondsFromNow } from '../defaults.js'
+import { toDomainJob, toJsonInput, type JobRow, type ManagerOptions } from './mappers.js'
+import { createJobs, decodeSendOptions, type JobRequest, type QueueDefaultsSource } from './job-create.js'
 import { createDlqJobs } from './dlq.js'
+import { buildFetchQuery, effectiveBatchSize, rateLimitRemaining } from './job-fetch.js'
 
-// ── Helpers for breaking up long functions ────────────────────────
-
-async function handleDebounce(
-  prisma: PrismaClient,
-  name: string,
-  data: unknown,
-  debounce: number,
-): Promise<string> {
-  const debounceUntil = new Date(Date.now() + debounce * 1000)
-  const existing = await prisma.debounceState.findUnique({
-    where: { queue_debounceKey: { queue: name, debounceKey: 'default' } },
-  })
-  const items = Array.isArray(existing?.dataAggregate) ? existing.dataAggregate : null
-  const newItems = Array.isArray(items) ? [...items, data] : [data]
-  await prisma.debounceState.upsert({
-    where: { queue_debounceKey: { queue: name, debounceKey: 'default' } },
-    create: {
-      queue: name,
-      debounceKey: 'default',
-      dataAggregate: toJsonValue(newItems),
-      debounceUntil,
-    },
-    update: {
-      dataAggregate: toJsonValue(newItems),
-      debounceUntil,
-    },
-  })
-  return `debounce:${name}:default`
+/** Reserved singleton key that owns a queue's open debounce batch. */
+function debounceKeyFor(queue: string): string {
+  return `debounce:${queue}`
 }
-
-async function checkQueuePolicy(prisma: PrismaClient, name: string, policy: string): Promise<string | null> {
-  if (policy === 'short' || policy === 'stately') {
-    const existing = await prisma.job.findFirst({ where: { queue: name, state: 'created' } })
-    if (existing) return existing.id
-  }
-  return null
-}
-
-async function getRateLimitRemaining(
-  prisma: PrismaClient,
-  queue: string,
-  rateLimit: { count: number; period: number } | null,
-): Promise<number | null> {
-  if (!rateLimit || rateLimit.count <= 0 || rateLimit.period <= 0) return null
-  const since = new Date(Date.now() - rateLimit.period * 1000)
-  const startedCount = await prisma.job.count({
-    where: {
-      queue,
-      state: { in: ['active', 'completed'] },
-      startedOn: { gte: since },
-    },
-  })
-  const remaining = rateLimit.count - startedCount
-  return remaining > 0 ? remaining : 0
-}
-
-function buildFetchQuery(
-  schema: string,
-  fairness: number,
-  effectiveBatch: number,
-): { query: string; params: (string | number)[] } {
-  const orderByClause =
-    fairness > 0
-      ? '(CASE WHEN random() < $2 THEN random() ELSE 1 END) ASC, j.priority DESC, j."createdOn" ASC'
-      : 'j.priority DESC, j."createdOn" ASC'
-  const limitParam = fairness > 0 ? 3 : 2
-  const query = `
-    WITH next_jobs AS (
-      SELECT j.id
-      FROM "${schema}".job j
-      WHERE j.queue = $1
-        AND j.state = 'created'
-        AND j."startAfter" <= now()
-        AND NOT EXISTS (
-          SELECT 1 FROM "${schema}".job_dependency d
-          WHERE d."jobId" = j.id
-            AND d."dependsOnId" NOT IN (
-              SELECT id FROM "${schema}".job WHERE state IN ('completed', 'cancelled')
-            )
-        )
-      ORDER BY ${orderByClause}
-      LIMIT $${limitParam}
-      FOR UPDATE SKIP LOCKED
-    ), updated AS (
-      UPDATE "${schema}".job j
-      SET state = 'active', "startedOn" = now()
-      FROM next_jobs
-      WHERE j.id = next_jobs.id
-      RETURNING j.*
-    )
-    SELECT * FROM updated ORDER BY priority DESC, "createdOn" ASC
-  `
-  const params: (string | number)[] = fairness > 0
-    ? ['', fairness, effectiveBatch]
-    : ['', effectiveBatch]
-  return { query, params }
-}
-
-// ── JobOps class ─────────────────────────────────────────────────
 
 const textEncoder = new TextEncoder()
+
+/** Create exactly one job through the shared creation path. */
+async function createJobRow(
+  client: Pick<PrismaClient, 'job' | 'jobDependency'>,
+  request: JobRequest,
+): Promise<string> {
+  const [id] = await createJobs(client, [request])
+  if (!id) throw new Error(`Failed to create a job on queue '${request.queue}'`)
+  return id
+}
 
 export class JobOps {
   constructor(
@@ -136,119 +45,126 @@ export class JobOps {
     }
   }
 
+  /**
+   * Fold a send into the queue's open debounce batch, or open a new one.
+   *
+   * The batch is an ordinary job holding the reserved debounce singleton key, so
+   * it has a real id, obeys the queue's retention and retry settings, and is
+   * fetched by the normal path once its window closes.
+   */
+  private async appendToDebounceBatch(
+    queueName: string,
+    data: unknown,
+    debounceSeconds: number,
+    queue: QueueDefaultsSource,
+  ): Promise<string> {
+    const singletonKey = debounceKeyFor(queueName)
+    const startAfter = secondsFromNow(debounceSeconds)
+    const open = await this.prisma.job.findFirst({
+      where: { queue: queueName, singletonKey, state: 'created' },
+      select: { id: true, data: true },
+    })
+    if (open) {
+      const current = open.data
+      const items = isBatchPayload(current) ? current.items : []
+      const updated = await this.prisma.job.updateMany({
+        where: { id: open.id, state: 'created' },
+        data: { data: toJsonInput({ _batched: true, items: [...items, data] }), startAfter },
+      })
+      // The batch was fetched between the read and the write; open a fresh window.
+      if (updated.count > 0) return open.id
+    }
+    return createJobRow(this.prisma, {
+      queue: queueName,
+      data: { _batched: true, items: [data] },
+      opts: decodeSendOptions({ singletonKey, startAfter }),
+      queueRow: queue,
+    })
+  }
+
   async send<T = unknown>(name: string, data?: T, options: SendOptions = {}): Promise<string> {
     this.assertPayloadWithinLimit(data)
-    const opts = Value.Decode(sendOptionsSchema, options)
+    const opts = decodeSendOptions(options)
     const queue = await this.prisma.queue.findUnique({ where: { name } })
 
     if (queue) {
-      const debounce = queue.debounce
-      if (debounce && debounce > 0) {
-        return handleDebounce(this.prisma, name, data, debounce)
+      if (queue.debounce && queue.debounce > 0) {
+        return this.appendToDebounceBatch(name, data, queue.debounce, queue)
       }
-      const policyResult = await checkQueuePolicy(this.prisma, name, queue.policy as string)
-      if (policyResult) return policyResult
+      const collapsed = await this.collapseByPolicy(name, queue.policy)
+      if (collapsed) return collapsed
     }
+    return createJobRow(this.prisma, { queue: name, data, opts, queueRow: queue })
+  }
 
-    const job = await this.prisma.job.create({
-      data: {
-        queue: name,
-        data: data as Prisma.InputJsonValue,
-        priority: opts.priority ?? 0,
-        startAfter: resolveStartAfter(opts.startAfter),
-        retryLimit: opts.retryLimit ?? queue?.retryLimit ?? 2,
-        retryDelay: opts.retryDelay ?? queue?.retryDelay ?? 0,
-        retryBackoff: opts.retryBackoff ?? queue?.retryBackoff ?? false,
-        retryJitter: opts.retryJitter ?? queue?.retryJitter ?? false,
-        expireIn: opts.expireIn ?? queue?.expireIn ?? 900,
-        expireIfNotStartedIn: opts.expireIfNotStartedIn,
-        singletonKey: opts.singletonKey,
-        deadLetter: opts.deadLetter ?? queue?.deadLetter,
-        policy: queue?.policy ?? 'standard',
-        keepUntil: new Date(Date.now() + (queue?.retentionDays ?? 14) * 24 * 60 * 60 * 1000),
-      },
+  /** `short` and `stately` queues hold at most one waiting job; a send collapses onto it. */
+  private async collapseByPolicy(name: string, policy: string): Promise<string | null> {
+    if (policy !== 'short' && policy !== 'stately') return null
+    const existing = await this.prisma.job.findFirst({
+      where: { queue: name, state: 'created' },
+      orderBy: { createdOn: 'asc' },
+      select: { id: true },
     })
-    if (opts.dependsOn && opts.dependsOn.length > 0) {
-      await this.prisma.jobDependency.createMany({
-        data: opts.dependsOn.map(depId => ({ jobId: job.id, dependsOnId: depId })),
-        skipDuplicates: true,
-      })
-    }
-    return job.id
+    return existing?.id ?? null
   }
 
   async insert(jobs: Array<{ name: string; data?: unknown; options?: SendOptions }>): Promise<string[]> {
     for (const entry of jobs) this.assertPayloadWithinLimit(entry.data)
-    const ids: string[] = []
-    await this.prisma.$transaction(async (tx) => {
-      for (const entry of jobs) {
-        const opts = Value.Decode(sendOptionsSchema, entry.options ?? {})
-        const q = await tx.queue.findUnique({ where: { name: entry.name } })
-        const created = await tx.job.create({
-          data: {
-            queue: entry.name, data: entry.data as Prisma.InputJsonValue,
-            priority: opts.priority ?? 0, startAfter: resolveStartAfter(opts.startAfter),
-            retryLimit: opts.retryLimit ?? q?.retryLimit ?? 2, retryDelay: opts.retryDelay ?? q?.retryDelay ?? 0,
-            retryBackoff: opts.retryBackoff ?? q?.retryBackoff ?? false, retryJitter: opts.retryJitter ?? q?.retryJitter ?? false,
-            expireIn: opts.expireIn ?? q?.expireIn ?? 900, expireIfNotStartedIn: opts.expireIfNotStartedIn,
-            singletonKey: opts.singletonKey, deadLetter: opts.deadLetter ?? q?.deadLetter,
-            policy: q?.policy ?? 'standard', keepUntil: new Date(Date.now() + (q?.retentionDays ?? 14) * 86_400_000),
-          },
-        })
-        if (opts.dependsOn && opts.dependsOn.length > 0) {
-          await tx.jobDependency.createMany({
-            data: opts.dependsOn.map((depId: string) => ({ jobId: created.id, dependsOnId: depId })),
-            skipDuplicates: true,
-          })
-        }
-        ids.push(created.id)
-      }
-    })
-    return ids
+    if (jobs.length === 0) return []
+    // One lookup for every distinct queue rather than one per job.
+    const names = [...new Set(jobs.map(entry => entry.name))]
+    const queueRows = await this.prisma.queue.findMany({ where: { name: { in: names } } })
+    const queues = new Map(queueRows.map(row => [row.name, row]))
+
+    const requests: JobRequest[] = jobs.map(entry => ({
+      queue: entry.name,
+      data: entry.data,
+      opts: decodeSendOptions(entry.options),
+      queueRow: queues.get(entry.name) ?? null,
+    }))
+    return this.prisma.$transaction(tx => createJobs(tx, requests))
   }
 
   async fetch<T = unknown>(queue: string, options: { batchSize?: number } = {}): Promise<Job<T>[]> {
-    const batchSize = options.batchSize ?? 1
     const queueRow = await this.prisma.queue.findUnique({ where: { name: queue } })
-    if (!queueRow) return []
+    if (!queueRow || queueRow.paused) return []
 
-    const rateLimit = queueRow.rateLimit as { count: number; period: number } | null
-    const rateLimitRemaining = await getRateLimitRemaining(this.prisma, queue, rateLimit)
-    if (rateLimitRemaining === 0) return []
+    const remaining = await rateLimitRemaining(this.prisma, queue, queueRow.rateLimit)
+    if (remaining === 0) return []
 
     if (queueRow.policy === 'singleton' || queueRow.policy === 'stately') {
-      const activeCount = await this.prisma.job.count({
-        where: { queue, state: 'active' },
-      })
+      const activeCount = await this.prisma.job.count({ where: { queue, state: 'active' } })
       if (activeCount > 0) return []
     }
 
-    if (queueRow.paused) return []
+    const batchSize = effectiveBatchSize(options.batchSize, queueRow.policy, remaining)
+    if (batchSize <= 0) return []
 
-    let effectiveBatch = queueRow.policy === 'singleton' || queueRow.policy === 'stately'
-      ? 1
-      : batchSize
-    if (rateLimitRemaining != null && rateLimitRemaining < effectiveBatch) {
-      effectiveBatch = rateLimitRemaining
-    }
-    const fairness = (queueRow.fairness as { lowPriorityShare?: number } | null)?.lowPriorityShare ?? 0
-    const { query, params } = buildFetchQuery(this.schema, fairness, effectiveBatch)
-    params[0] = queue
-    const rows = await this.prisma.$queryRawUnsafe<RawJobRow[]>(query, ...params)
-    return rows.map(row => rawRowToDomainJob<T>(row))
+    const { query, params } = buildFetchQuery(this.schema, queue, queueRow.fairness, batchSize)
+    const rows = await this.prisma.$queryRawUnsafe<JobRow[]>(query, ...params)
+    return rows.map(row => toDomainJob<T>(row))
   }
 
+  /**
+   * Mark active jobs completed in one statement.
+   *
+   * `undefined` output means "no output"; every other value — including `0`,
+   * `''` and `false` — is stored, so a handler's legitimate falsy result is not
+   * silently replaced with null.
+   */
   async complete(id: string | string[], options: { output?: unknown } = {}): Promise<void> {
     const ids = Array.isArray(id) ? id : [id]
-    const output = options.output ? JSON.stringify(options.output) : null
-    const s = this.schema
-    for (const jobId of ids) {
-      await this.prisma.$executeRawUnsafe(
-        `UPDATE "${s}".job SET state = 'completed', "completedOn" = now(), output = $1::jsonb WHERE id = $2::uuid AND state = 'active'`,
-        output,
-        jobId
-      )
-    }
+    if (ids.length === 0) return
+    const output = 'output' in options && options.output !== undefined
+      ? JSON.stringify(toJsonInput(options.output, 'output'))
+      : null
+    await this.prisma.$executeRawUnsafe(
+      `UPDATE "${this.schema}".job
+       SET state = 'completed', "completedOn" = now(), output = $1::jsonb
+       WHERE id = ANY($2::uuid[]) AND state = 'active'`,
+      output,
+      ids,
+    )
   }
 
   async fail(id: string | string[], error?: Error | string): Promise<void> {
@@ -257,51 +173,71 @@ export class JobOps {
     const errorMsg = error instanceof Error ? error.message : (error ?? 'Unknown error')
     const output = JSON.stringify({ error: errorMsg })
 
-    const jobs = await this.prisma.job.findMany({
-      where: { id: { in: ids }, state: 'active' },
-    })
+    const jobs = await this.prisma.job.findMany({ where: { id: { in: ids }, state: 'active' } })
     if (jobs.length === 0) return
 
     const s = this.schema
-    const placeholders = ids.map((_, i) => `$${i + 2}`).join(', ')
-    const retryQuery = `
-      UPDATE "${s}".job
-      SET state = 'created', "retryCount" = "retryCount" + 1,
-          "startAfter" = now() + (
-            "retryDelay" * CASE WHEN "retryBackoff" THEN power(2, "retryCount")::int ELSE 1 END
-            * CASE WHEN "retryJitter" THEN (0.5 + random() * 0.5) ELSE 1 END
-            || ' seconds'
-          )::interval,
-          output = $1::jsonb
-      WHERE id IN (${placeholders}) AND state = 'active' AND "retryCount" < "retryLimit"
-    `
-    const failQuery = `
-      UPDATE "${s}".job
-      SET state = 'failed', "retryCount" = "retryCount" + 1, output = $1::jsonb
-      WHERE id IN (${placeholders}) AND state = 'active' AND "retryCount" >= "retryLimit"
-      RETURNING id, "deadLetter", data, priority, "expireIn", "singletonKey"
-    `
-
-    const retryJobs = jobs.filter(j => j.retryCount < j.retryLimit)
+    const retryJobs = jobs.filter(job => job.retryCount < job.retryLimit)
     for (const job of retryJobs) {
       await this.options.onRetry?.(toDomainJob(job), new Error(errorMsg))
     }
 
-    await this.prisma.$executeRawUnsafe(retryQuery, output, ...ids)
+    await this.prisma.$executeRawUnsafe(
+      `UPDATE "${s}".job
+       SET state = 'created', "retryCount" = "retryCount" + 1,
+           "startAfter" = now() + (
+             "retryDelay" * CASE WHEN "retryBackoff" THEN power(2, LEAST("retryCount", 30))::int ELSE 1 END
+             * CASE WHEN "retryJitter" THEN (0.5 + random() * 0.5) ELSE 1 END
+             || ' seconds'
+           )::interval,
+           output = $1::jsonb
+       WHERE id = ANY($2::uuid[]) AND state = 'active' AND "retryCount" < "retryLimit"`,
+      output,
+      ids,
+    )
 
-    interface RawExhausted { id: string; deadLetter: string | null; data: unknown; priority: number; expireIn: number; singletonKey: string | null }
-    const exhausted = await this.prisma.$queryRawUnsafe<RawExhausted[]>(failQuery, output, ...ids)
+    const exhausted = await this.prisma.$queryRawUnsafe<ExhaustedRow[]>(
+      `UPDATE "${s}".job
+       SET state = 'failed', "retryCount" = "retryCount" + 1, output = $1::jsonb
+       WHERE id = ANY($2::uuid[]) AND state = 'active' AND "retryCount" >= "retryLimit"
+       RETURNING id, queue, "deadLetter", data, priority, "expireIn", "singletonKey"`,
+      output,
+      ids,
+    )
 
-    const dlqJobs = exhausted.filter((j): j is RawExhausted & { deadLetter: string } => j.deadLetter != null)
+    const dlqJobs = exhausted.filter(hasDeadLetter)
     if (dlqJobs.length > 0) {
-      const jobQueueMap = new Map(jobs.map(j => [j.id, j.queue]))
       await createDlqJobs(
         this.prisma,
         dlqJobs,
-        jobQueueMap,
-        this.options.dlqRetentionDays ?? 14,
+        this.options.dlqRetentionDays ?? DLQ_RETENTION_DAYS,
         this.options.onDlq,
       )
     }
   }
+}
+
+interface ExhaustedRow {
+  id: string
+  queue: string
+  deadLetter: string | null
+  data: unknown
+  priority: number
+  expireIn: number
+  singletonKey: string | null
+}
+
+function hasDeadLetter(row: ExhaustedRow): row is ExhaustedRow & { deadLetter: string } {
+  return row.deadLetter !== null
+}
+
+interface BatchPayload {
+  _batched: true
+  items: unknown[]
+}
+
+function isBatchPayload(value: unknown): value is BatchPayload {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const candidate = value as Record<string, unknown>
+  return candidate['_batched'] === true && Array.isArray(candidate['items'])
 }

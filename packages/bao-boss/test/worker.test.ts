@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import { BaoBoss } from '../src/BaoBoss'
+import { waitFor } from './helpers'
 
-const skip = !Bun.env['DATABASE_URL']
-
-describe.skipIf(skip)('Worker', () => {
+describe('Worker', () => {
   let boss: BaoBoss
 
   beforeAll(async () => {
@@ -26,9 +25,7 @@ describe.skipIf(skip)('Worker', () => {
 
     const id = await boss.send(qname, { hello: 'worker' })
 
-    // Wait for job to be processed
-    await new Promise(resolve => setTimeout(resolve, 500))
-
+    await waitFor(() => processed.includes(id))
     await boss.offWork(workerId)
     expect(processed).toContain(id)
 
@@ -50,7 +47,7 @@ describe.skipIf(skip)('Worker', () => {
     })
 
     await boss.send(qname, {})
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    await waitFor(() => attempts >= 2)
 
     await boss.offWork(workerId)
     expect(attempts).toBeGreaterThanOrEqual(2)
@@ -75,7 +72,7 @@ describe.skipIf(skip)('Worker', () => {
       { name: qname, data: { n: 3 } },
     ])
 
-    await new Promise(resolve => setTimeout(resolve, 500))
+    await waitFor(() => ids.every(id => processed.includes(id)))
 
     await boss.offWork(workerId)
     for (const id of ids) {
@@ -119,7 +116,7 @@ describe.skipIf(skip)('Worker', () => {
       { name: qname, data: { n: 4 } },
     ])
 
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    await waitFor(() => ids.every(id => processed.includes(id)))
 
     await boss.offWork(w1)
     await boss.offWork(w2)

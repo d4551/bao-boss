@@ -2,9 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import { BaoBoss } from '../src/BaoBoss'
 import { Maintenance } from '../src/Maintenance'
 
-const skip = !Bun.env['DATABASE_URL']
-
-describe.skipIf(skip)('Scheduler', () => {
+describe('Scheduler', () => {
   let boss: BaoBoss
 
   beforeAll(async () => {

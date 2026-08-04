@@ -1,10 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import { BaoBoss } from '../src/BaoBoss'
-import { uniqueName, waitFor, createTestBoss, cleanupQueue } from './helpers'
+import { uniqueName, waitFor, createTestBoss, cleanupQueue , simulateWork } from './helpers'
 
-const skip = !Bun.env['DATABASE_URL']
-
-describe.skipIf(skip)('Worker (advanced)', () => {
+describe('Worker (advanced)', () => {
   let boss: BaoBoss
 
   beforeAll(async () => {
@@ -35,7 +33,7 @@ describe.skipIf(skip)('Worker (advanced)', () => {
       async () => {
         concurrent++
         if (concurrent > maxConcurrent) maxConcurrent = concurrent
-        await Bun.sleep(200)
+        await simulateWork(200)
         concurrent--
       }
     )
@@ -59,7 +57,7 @@ describe.skipIf(skip)('Worker (advanced)', () => {
       qname,
       { pollingIntervalSeconds: 0.1, handlerTimeoutSeconds: 0.5 },
       async () => {
-        await Bun.sleep(3000)
+        await simulateWork(3000)
       }
     )
 
@@ -137,7 +135,7 @@ describe.skipIf(skip)('Worker (advanced)', () => {
       qname,
       { pollingIntervalSeconds: 0.1 },
       async () => {
-        await Bun.sleep(300)
+        await simulateWork(300)
         handlerFinished = true
       }
     )

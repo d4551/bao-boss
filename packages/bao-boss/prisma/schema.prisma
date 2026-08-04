@@ -36,6 +36,7 @@ model Job {
   dependents   JobDependency[] @relation("JobDependedBy")
 
   @@index([queue, state, startAfter, priority(sort: Desc)])
+  @@index([queue, singletonKey])
   @@map("job")
   @@schema("baoboss")
 }
@@ -48,6 +49,7 @@ model JobDependency {
   dependsOn Job @relation("JobDependedBy", fields: [dependsOnId], references: [id], onDelete: Cascade)
 
   @@id([jobId, dependsOnId])
+  @@index([dependsOnId])
   @@map("job_dependency")
   @@schema("baoboss")
 }
@@ -100,22 +102,11 @@ model CronLock {
   scheduleName  String
   minuteBucket  String
   lockedUntil   DateTime @db.Timestamptz
-  instanceId   String
+  instanceId    String
 
   @@id([scheduleName, minuteBucket])
+  @@index([lockedUntil])
   @@map("cron_lock")
-  @@schema("baoboss")
-}
-
-model DebounceState {
-  queue         String
-  debounceKey   String   @default("default")
-  dataAggregate Json?
-  debounceUntil DateTime @db.Timestamptz
-  updatedOn     DateTime @updatedAt @db.Timestamptz
-
-  @@id([queue, debounceKey])
-  @@map("debounce_state")
   @@schema("baoboss")
 }
 

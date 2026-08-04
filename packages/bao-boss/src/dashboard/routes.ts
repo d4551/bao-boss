@@ -1,307 +1,348 @@
 import type { BaoBoss } from '../BaoBoss.js'
-import { t } from '../i18n.js'
-import { getMetricsSnapshot, getQueueDepths, toPrometheusFormat } from '../Metrics.js'
+import type { Job, Queue } from '../types.js'
+import { formatNumber, t, tf } from '../i18n.js'
+import { getQueueDepths, toPrometheusFormat } from '../Metrics.js'
+import { EMPTY, html, joinHtml, type SafeHtml } from './safe-html.js'
 import {
-  esc, progressBarHtml, emptyRow, queueRowHtml, queuesTableHtml,
-  schedulesTableHtml, jobsTableHtml, queueSettingsRows, jobDetailFieldsHtml,
+  queueSettingsRows, queuesTableHtml, schedulesTableHtml, type PageState,
 } from './html.js'
+import {
+  jobDetailRows, jobRowResult, jobsTableHtml, progressBarHtml, undoableResult,
+} from './html-jobs.js'
 import { fragmentResponse } from './response.js'
 import { UI } from './ui.js'
 
-type FullPageFn = (content: string, title: string, csrfToken?: string, status?: number) => Response
+/** Jobs listed per page on a queue detail view. */
+const JOBS_PER_PAGE = 25
 
-export async function dashboardIndex(
-  boss: BaoBoss,
-  prefix: string,
-  locale: string,
-  fullPage: FullPageFn,
-  csrfToken?: string,
-): Promise<Response> {
-  const queues = await boss.getQueues()
-  const schedules = await boss.getSchedules()
-  const queueRows = queues.length === 0
-    ? emptyRow(6, t('empty.noQueues', locale))
-    : (await Promise.all(queues.map(async q => {
-        const size = await boss.getQueueSize(q.name)
-        return queueRowHtml(q, prefix, locale, size)
-      }))).join('')
+type FullPageFn = (content: SafeHtml, title: string, status?: number) => Response
 
-  const content = `
-    <div hx-get="${prefix}/stats" hx-trigger="load, every 10s" hx-swap="outerHTML"></div>
-    <div class="${UI.card}"><div class="${UI.cardBody}">
-      <h2 class="${UI.cardTitle}">${t('section.queues', locale)}</h2>
-      ${queuesTableHtml(queueRows, prefix, locale)}
-    </div></div>
-    <div class="${UI.card}"><div class="${UI.cardBody}">
-      <h2 class="${UI.cardTitle}">${t('section.schedules', locale)} (${schedules.length})</h2>
-      ${schedulesTableHtml(schedules, prefix, locale, { includeCreated: false })}
-      <p class="${UI.metricsHint}"><a class="link link-hover" href="${prefix}/metrics">${t('link.metricsScrape', locale)}</a></p>
-    </div></div>`
-  return fullPage(content, t('title.dashboard', locale), csrfToken)
+export interface RouteContext {
+  boss: BaoBoss
+  prefix: string
+  locale: string
+  /** Path of the current request, so links and forms round-trip to it. */
+  path: string
+  fullPage: FullPageFn
 }
 
-export async function queuesFragment(
-  boss: BaoBoss,
-  prefix: string,
-  locale: string,
-  search?: string,
-): Promise<Response> {
-  let queues = await boss.getQueues()
-  if (search) {
-    const term = search.toLowerCase()
-    queues = queues.filter(q => q.name.toLowerCase().includes(term))
-  }
-  const rows = await Promise.all(queues.map(async q => {
-    const size = await boss.getQueueSize(q.name)
-    return queueRowHtml(q, prefix, locale, size)
-  }))
-  return fragmentResponse(queuesTableHtml(
-    rows.length === 0 ? emptyRow(6, t('empty.noQueuesShort', locale)) : rows.join(''),
-    prefix, locale, search,
-  ))
+function readPage(value: string | undefined): number {
+  const page = Number.parseInt(value ?? '1', 10)
+  return Number.isFinite(page) && page > 0 ? page : 1
 }
 
-export async function queuesPage(
-  boss: BaoBoss,
-  prefix: string,
-  locale: string,
-  fullPage: FullPageFn,
-  csrfToken?: string,
-  search?: string,
-): Promise<Response> {
-  let queues = await boss.getQueues()
-  if (search) {
-    const term = search.toLowerCase()
-    queues = queues.filter(q => q.name.toLowerCase().includes(term))
-  }
-  const rows = await Promise.all(queues.map(async q => {
-    const size = await boss.getQueueSize(q.name)
-    return queueRowHtml(q, prefix, locale, size)
-  }))
-  const table = queuesTableHtml(
-    rows.length === 0 ? emptyRow(6, t('empty.noQueuesShort', locale)) : rows.join(''),
-    prefix, locale, search,
-  )
-  const content = `
+/** Queues with their pending counts, filtered by name, in two queries total. */
+async function listQueues(boss: BaoBoss, search: string): Promise<Array<{ queue: Queue; size: number }>> {
+  const all = await boss.getQueues()
+  const term = search.trim().toLowerCase()
+  const matching = term.length > 0
+    ? all.filter(queue => queue.name.toLowerCase().includes(term))
+    : all
+  const sizes = await boss.getQueueSizes(matching.map(queue => queue.name))
+  return matching.map(queue => ({ queue, size: sizes.get(queue.name) ?? 0 }))
+}
+
+export async function queuesPage(context: RouteContext, search: string): Promise<Response> {
+  const { boss, prefix, locale, path, fullPage } = context
+  const queues = await listQueues(boss, search)
+  const content = html`
     <h1 class="${UI.pageTitle}">${t('section.queues', locale)}</h1>
-    <div class="${UI.card}"><div class="${UI.cardBody}">${table}</div></div>`
-  return fullPage(content, t('title.queues', locale), csrfToken)
+    <section class="${UI.card}"><div class="${UI.cardBody}">
+      ${queuesTableHtml({ queues, search, path, prefix, locale })}
+    </div></section>`
+  return fullPage(content, t('title.queues', locale))
 }
 
-async function queueStatCounts(boss: BaoBoss, name: string, deadLetter: string | null) {
-  const [created, active, completed, failed, cancelled, dlqDepth] = await Promise.all([
-    boss.getQueueSize(name, { before: 'active' }),
-    boss.prisma.job.count({ where: { queue: name, state: 'active' } }),
-    boss.prisma.job.count({ where: { queue: name, state: 'completed' } }),
-    boss.prisma.job.count({ where: { queue: name, state: 'failed' } }),
-    boss.prisma.job.count({ where: { queue: name, state: 'cancelled' } }),
-    deadLetter ? boss.getDLQDepth(deadLetter) : Promise.resolve(0),
+export async function dashboardIndex(context: RouteContext): Promise<Response> {
+  const { boss, prefix, locale, fullPage } = context
+  const [queues, schedules, stats] = await Promise.all([
+    listQueues(boss, ''),
+    boss.getSchedules(),
+    collectStats(boss),
   ])
-  return { created, active, completed, failed, cancelled, dlqDepth }
+  const content = html`
+    <h1 class="${UI.pageTitle}">${t('title.dashboard', locale)}</h1>
+    <div hx-ext="sse" sse-connect="${prefix}/sse/live">
+      <div id="${LIVE_STATS_ID}" sse-swap="stats" hx-swap="innerHTML">${statsHtml(stats, locale)}</div>
+      <section class="${UI.card}"><div class="${UI.cardBody}">
+        <h2 class="${UI.cardTitle}">${t('section.queues', locale)}</h2>
+        <div id="${LIVE_QUEUES_ID}" sse-swap="queues" hx-swap="innerHTML">
+          ${queuesTableHtml({ queues, search: '', path: `${prefix}/queues`, prefix, locale })}
+        </div>
+      </section></div>
+    </div>
+    <section class="${UI.card}"><div class="${UI.cardBody}">
+      <h2 class="${UI.cardTitle}">${t('section.schedules', locale)}</h2>
+      ${schedulesTableHtml({
+        schedules, includeCreated: false, prefix, locale, path: `${prefix}/schedules`,
+      })}
+      <p class="${UI.hint}">
+        <a class="${UI.linkQuiet}" href="${prefix}/metrics">${t('link.metricsScrape', locale)}</a>
+      </p>
+    </div></section>`
+  return fullPage(content, t('title.dashboard', locale))
 }
 
-function queueStatsHtml(
-  counts: Awaited<ReturnType<typeof queueStatCounts>>,
-  deadLetter: string | null,
-  locale: string,
-): string {
-  const dlq = deadLetter
-    ? `<div class="stat${counts.dlqDepth > 0 ? ' border-error' : ''}"><div class="stat-value text-primary">${counts.dlqDepth}</div><div class="stat-title">${t('stat.dlq', locale)}</div></div>`
-    : ''
-  return `<div class="${UI.stats}" role="region" aria-label="${t('aria.queueStats', locale)}">
-    <div class="stat"><div class="stat-value text-primary">${counts.created}</div><div class="stat-title">${t('stat.created', locale)}</div></div>
-    <div class="stat"><div class="stat-value text-primary">${counts.active}</div><div class="stat-title">${t('stat.active', locale)}</div></div>
-    <div class="stat"><div class="stat-value text-primary">${counts.completed}</div><div class="stat-title">${t('stat.completed', locale)}</div></div>
-    <div class="stat"><div class="stat-value text-primary">${counts.failed}</div><div class="stat-title">${t('stat.failed', locale)}</div></div>
-    <div class="stat"><div class="stat-value text-primary">${counts.cancelled}</div><div class="stat-title">${t('stat.cancelled', locale)}</div></div>
-    ${dlq}
-  </div>`
+// ── Statistics ────────────────────────────────────────────────────
+
+interface StatEntry {
+  labelKey: string
+  value: number
+  alert?: boolean
 }
 
-export async function queueDetail(
-  boss: BaoBoss,
-  prefix: string,
-  locale: string,
-  name: string,
-  fullPage: FullPageFn,
-  csrfToken?: string,
-): Promise<Response> {
+async function collectStats(boss: BaoBoss): Promise<StatEntry[]> {
+  const [queues, total, active, completed, failed] = await Promise.all([
+    boss.getQueues(),
+    boss.prisma.job.count(),
+    boss.prisma.job.count({ where: { state: 'active' } }),
+    boss.prisma.job.count({ where: { state: 'completed' } }),
+    boss.prisma.job.count({ where: { state: 'failed' } }),
+  ])
+  return [
+    { labelKey: 'stat.queues', value: queues.length },
+    { labelKey: 'stat.totalJobs', value: total },
+    { labelKey: 'stat.active', value: active },
+    { labelKey: 'stat.completed', value: completed },
+    { labelKey: 'stat.failed', value: failed, alert: failed > 0 },
+  ]
+}
+
+const LIVE_STATS_ID = 'bao-live-stats'
+const LIVE_QUEUES_ID = 'bao-live-queues'
+
+function statsHtml(entries: StatEntry[], locale: string, labelKey = 'aria.dashboardStats'): SafeHtml {
+  return html`<section class="${UI.stats}" aria-label="${t(labelKey, locale)}">
+    ${joinHtml(entries.map(entry => html`<div class="${entry.alert ? UI.statAlert : UI.stat}">
+      <div class="${UI.statValue}">${formatNumber(entry.value, locale)}</div>
+      <div class="${UI.statTitle}">${t(entry.labelKey, locale)}</div>
+    </div>`))}
+  </section>`
+}
+
+export async function statsPage(context: RouteContext): Promise<Response> {
+  const { boss, prefix, locale, fullPage } = context
+  const stats = await collectStats(boss)
+  const content = html`
+    <h1 class="${UI.pageTitle}">${t('section.stats', locale)}</h1>
+    <div hx-ext="sse" sse-connect="${prefix}/sse/live">
+      <div id="${LIVE_STATS_ID}" sse-swap="stats" hx-swap="innerHTML">${statsHtml(stats, locale)}</div>
+    </div>
+    <p class="${UI.hint}">
+      <a class="${UI.linkQuiet}" href="${prefix}/metrics">${t('link.metricsScrape', locale)}</a>
+    </p>`
+  return fullPage(content, t('title.stats', locale))
+}
+
+// ── Queue detail ──────────────────────────────────────────────────
+
+async function queueStats(boss: BaoBoss, queue: Queue): Promise<StatEntry[]> {
+  const counts = await Promise.all([
+    boss.getQueueSize(queue.name, { before: 'active' }),
+    boss.prisma.job.count({ where: { queue: queue.name, state: 'active' } }),
+    boss.prisma.job.count({ where: { queue: queue.name, state: 'completed' } }),
+    boss.prisma.job.count({ where: { queue: queue.name, state: 'failed' } }),
+    boss.prisma.job.count({ where: { queue: queue.name, state: 'cancelled' } }),
+    queue.deadLetter ? boss.getDLQDepth(queue.deadLetter) : Promise.resolve(0),
+  ])
+  const [created, active, completed, failed, cancelled, dlq] = counts
+  const entries: StatEntry[] = [
+    { labelKey: 'stat.created', value: created },
+    { labelKey: 'stat.active', value: active },
+    { labelKey: 'stat.completed', value: completed },
+    { labelKey: 'stat.failed', value: failed, alert: failed > 0 },
+    { labelKey: 'stat.cancelled', value: cancelled },
+  ]
+  if (queue.deadLetter) entries.push({ labelKey: 'stat.dlq', value: dlq, alert: dlq > 0 })
+  return entries
+}
+
+export async function queueDetail(context: RouteContext, name: string, pageParam?: string): Promise<Response> {
+  const { boss, prefix, locale, path, fullPage } = context
   const queue = await boss.getQueue(name)
   if (!queue) {
-    return fullPage(`<p>${t('msg.queueNotFound', locale)}</p>`, `${t('section.queue', locale)}: ${esc(name)}`, csrfToken, 404)
+    return fullPage(
+      html`<h1 class="${UI.pageTitle}">${t('msg.queueNotFound', locale)}</h1>
+        <p><a class="${UI.link}" href="${prefix}/queues">${t('nav.queues', locale)}</a></p>`,
+      t('title.notFound', locale),
+      404,
+    )
   }
-  const counts = await queueStatCounts(boss, name, queue.deadLetter)
-  const { jobs } = await boss.searchJobs({ queue: name, limit: 50, sortBy: 'createdOn', sortOrder: 'desc' })
-  const content = `
-    <h1 class="${UI.pageTitle}">${t('section.queue', locale)}: ${esc(name)}</h1>
-    ${queueStatsHtml(counts, queue.deadLetter, locale)}
-    <div class="${UI.card}"><div class="${UI.cardBody}">
+  const page = readPage(pageParam)
+  const [stats, results] = await Promise.all([
+    queueStats(boss, queue),
+    boss.searchJobs({
+      queue: name,
+      limit: JOBS_PER_PAGE,
+      offset: (page - 1) * JOBS_PER_PAGE,
+      sortBy: 'createdOn',
+      sortOrder: 'desc',
+    }),
+  ])
+  const pageState: PageState = { page, pageSize: JOBS_PER_PAGE, total: results.total }
+
+  const content = html`
+    <h1 class="${UI.pageTitle}">${t('section.queue', locale)}: ${queue.name}</h1>
+    ${statsHtml(stats, locale, 'aria.queueStats')}
+    <section class="${UI.card}"><div class="${UI.cardBody}">
       <h2 class="${UI.cardTitleSm}">${t('section.queueSettings', locale)}</h2>
       <div class="${UI.tableWrap}"><table class="${UI.table}">
-        <thead><tr><th scope="col">${t('table.setting', locale)}</th><th scope="col">${t('table.value', locale)}</th></tr></thead>
+        <thead><tr>
+          <th scope="col">${t('table.setting', locale)}</th>
+          <th scope="col">${t('table.value', locale)}</th>
+        </tr></thead>
         <tbody>${queueSettingsRows(queue, locale)}</tbody>
       </table></div>
-    </div></div>
-    <div class="${UI.card}"><div class="${UI.cardBody}">
+    </div></section>
+    <section class="${UI.card}"><div class="${UI.cardBody}">
       <h2 class="${UI.cardTitleSm}">${t('section.recentJobs', locale)}</h2>
-      ${jobsTableHtml(jobs, prefix, locale)}
-    </div></div>`
-  return fullPage(content, `${t('section.queue', locale)}: ${name}`, csrfToken)
+      ${jobsTableHtml({ jobs: results.jobs, page: pageState, path, params: {}, prefix, locale })}
+    </div></section>`
+  return fullPage(content, tf('title.queue', { name: queue.name }, locale))
 }
 
-function jobProgressCell(job: { id: string; state: string; progress: number | null }, prefix: string, locale: string): string {
-  if (job.progress == null) return ''
+// ── Job detail ────────────────────────────────────────────────────
+
+function progressCell(job: Job, prefix: string, locale: string): SafeHtml {
+  if (job.progress === null) return EMPTY
   const bar = progressBarHtml(job.progress, locale)
-  const terminal = ['completed', 'failed', 'cancelled'].includes(job.state)
-  const body = terminal
-    ? bar
-    : `<div hx-ext="sse" sse-connect="${prefix}/sse/progress/${job.id}?locale=${encodeURIComponent(locale)}" sse-swap="progress" hx-swap="innerHTML">${bar}</div>`
-  return `<tr><td>${t('field.progress', locale)}</td><td>${body}</td></tr>`
+  const live = job.state === 'active'
+    ? html`<div hx-ext="sse" sse-connect="${prefix}/sse/progress/${job.id}"
+        sse-swap="progress" hx-swap="innerHTML">${bar}</div>`
+    : bar
+  return html`<tr><th scope="row">${t('field.progress', locale)}</th><td>${live}</td></tr>`
 }
 
-export async function jobDetail(
-  boss: BaoBoss,
-  prefix: string,
-  locale: string,
-  id: string,
-  fullPage: FullPageFn,
-  csrfToken?: string,
-): Promise<Response> {
+export async function jobDetail(context: RouteContext, id: string): Promise<Response> {
+  const { boss, prefix, locale, fullPage } = context
   const job = await boss.getJobById(id)
   if (!job) {
-    return fullPage(`<p>${t('msg.jobNotFound', locale)}</p>`, t('msg.jobNotFound', locale), csrfToken, 404)
+    return fullPage(
+      html`<h1 class="${UI.pageTitle}">${t('msg.jobNotFound', locale)}</h1>
+        <p><a class="${UI.link}" href="${prefix}/queues">${t('nav.queues', locale)}</a></p>`,
+      t('title.notFound', locale),
+      404,
+    )
   }
-  const retryBtn = job.state === 'failed' || job.state === 'cancelled'
-    ? `<button class="${UI.touchBtnPrimary}" type="button" aria-label="${t('aria.retryThis', locale)}"
-        hx-post="${prefix}/jobs/${job.id}/retry?ctx=detail" hx-confirm="${t('confirm.retryThis', locale)}"
-        hx-swap="innerHTML" hx-target="closest .card-actions">${t('btn.retry', locale)}</button>`
-    : ''
-  const cancelBtn = job.state !== 'completed' && job.state !== 'cancelled'
-    ? `<button class="${UI.touchBtnError}" type="button" aria-label="${t('aria.cancelThis', locale)}"
-        hx-delete="${prefix}/jobs/${job.id}?ctx=detail" hx-confirm="${t('confirm.cancelThis', locale)}"
-        hx-swap="innerHTML" hx-target="closest .card-actions">${t('btn.cancel', locale)}</button>`
-    : ''
-  const output = job.output
-    ? `<h3 class="font-semibold mt-4 mb-2">${t('section.output', locale)}</h3><pre class="${UI.pre}">${esc(JSON.stringify(job.output, null, 2))}</pre>`
-    : ''
-  const content = `
-    <h1 class="${UI.pageTitle}">${t('section.job', locale)}: ${job.id}</h1>
-    <div class="${UI.card}"><div class="${UI.cardBody} grid grid-cols-1 md:grid-cols-2 gap-4">
+  const output = job.output !== null && job.output !== undefined
+    ? html`<h3 class="${UI.subSectionTitle}">${t('section.output', locale)}</h3>
+        <pre class="${UI.pre}">${JSON.stringify(job.output, null, 2)}</pre>`
+    : EMPTY
+
+  const content = html`
+    <h1 class="${UI.pageTitle}"><span class="${UI.cellId}">${t('section.job', locale)}: ${job.id}</span></h1>
+    <section class="${UI.card}"><div class="${UI.cardBodySplit}">
       <div>
-        <h2 class="font-semibold mb-2">${t('section.details', locale)}</h2>
+        <h2 class="${UI.sectionTitle}">${t('section.details', locale)}</h2>
         <div class="${UI.tableWrap}"><table class="${UI.tableSm}"><tbody>
-          ${jobDetailFieldsHtml(job, prefix, locale, jobProgressCell(job, prefix, locale))}
+          ${jobDetailRows(job, { prefix, locale }, progressCell(job, prefix, locale))}
         </tbody></table></div>
       </div>
       <div>
-        <h2 class="font-semibold mb-2">${t('section.data', locale)}</h2>
-        <pre class="${UI.pre}">${esc(JSON.stringify(job.data, null, 2))}</pre>
+        <h2 class="${UI.sectionTitle}">${t('section.data', locale)}</h2>
+        <pre class="${UI.pre}">${JSON.stringify(job.data, null, 2)}</pre>
         ${output}
       </div>
-      <div class="card-actions mt-4 md:col-span-2 flex flex-wrap gap-2">${retryBtn}${cancelBtn}</div>
-    </div></div>`
-  return fullPage(content, `${t('section.job', locale)}: ${job.id}`, csrfToken)
+    </div></section>`
+  return fullPage(content, tf('title.job', { id: job.id }, locale))
 }
 
-export async function retryJob(
-  boss: BaoBoss,
-  locale: string,
-  id: string,
-  context: 'list' | 'detail' = 'list',
-): Promise<Response> {
+// ── Mutations ─────────────────────────────────────────────────────
+
+export async function retryJob(context: RouteContext, id: string): Promise<Response> {
+  const { boss, prefix, locale } = context
   await boss.resume(id)
-  if (context === 'detail') {
-    return fragmentResponse(`<span class="badge badge-success">${t('msg.jobQueuedRetry', locale)}</span>`)
-  }
-  return fragmentResponse(`<tr><td colspan="6" class="text-success">${t('msg.jobQueuedRetry', locale)}</td></tr>`)
+  return fragmentResponse(jobRowResult(undoableResult({
+    message: t('msg.jobQueuedRetry', locale),
+    undoMethod: 'delete',
+    undoUrl: `${prefix}/jobs/${id}`,
+    undoTarget: 'closest tr',
+    badgeClass: UI.badgeOk,
+    locale,
+  })))
 }
 
-export async function cancelJob(
-  boss: BaoBoss,
-  locale: string,
-  id: string,
-  context: 'list' | 'detail' = 'list',
-): Promise<Response> {
+export async function cancelJob(context: RouteContext, id: string): Promise<Response> {
+  const { boss, prefix, locale } = context
   await boss.cancel(id)
-  if (context === 'detail') {
-    return fragmentResponse(`<span class="badge badge-ghost">${t('msg.jobCancelled', locale)}</span>`)
-  }
-  return fragmentResponse(`<tr><td colspan="6" class="text-base-content/70">${t('msg.jobCancelled', locale)}</td></tr>`)
+  return fragmentResponse(jobRowResult(undoableResult({
+    message: t('msg.jobCancelled', locale),
+    undoMethod: 'post',
+    undoUrl: `${prefix}/jobs/${id}/retry`,
+    undoTarget: 'closest tr',
+    badgeClass: UI.badgeNeutral,
+    locale,
+  })))
 }
 
-export async function schedulesPage(
-  boss: BaoBoss,
-  prefix: string,
-  locale: string,
-  fullPage: FullPageFn,
-  csrfToken?: string,
+/** Hidden inputs that let the undo control re-send exactly the ids just acted on. */
+function idFields(ids: string[]): SafeHtml {
+  return joinHtml(ids.map(id => html`<input type="hidden" name="ids" value="${id}">`))
+}
+
+async function bulkResult(
+  context: RouteContext,
+  ids: string[],
+  messageKey: string,
+  undoPath: string,
+  badgeClass: string,
 ): Promise<Response> {
+  const { prefix, locale } = context
+  return fragmentResponse(html`<span class="${UI.liveRegion}">
+    <span class="${badgeClass}">${tf(messageKey, { count: ids.length }, locale)}</span>
+    <form class="${UI.transparentWrapper}" hx-post="${prefix}${undoPath}" hx-target="closest span" hx-swap="outerHTML">
+      ${idFields(ids)}
+      <button type="submit" class="${UI.touchBtnGhost}">${t('btn.undo', locale)}</button>
+    </form>
+  </span>`)
+}
+
+export async function bulkRetryJobs(context: RouteContext, ids: string[]): Promise<Response> {
+  await context.boss.resume(ids)
+  return bulkResult(context, ids, 'msg.bulkRetryDone', '/jobs/bulk/cancel', UI.badgeOk)
+}
+
+export async function bulkCancelJobs(context: RouteContext, ids: string[]): Promise<Response> {
+  await context.boss.cancel(ids)
+  return bulkResult(context, ids, 'msg.bulkCancelDone', '/jobs/bulk/retry', UI.badgeNeutral)
+}
+
+export async function deleteSchedule(context: RouteContext, name: string): Promise<Response> {
+  await context.boss.unschedule(name)
+  return fragmentResponse(EMPTY)
+}
+
+// ── Schedules and metrics ─────────────────────────────────────────
+
+export async function schedulesPage(context: RouteContext, confirmDelete?: string): Promise<Response> {
+  const { boss, prefix, locale, path, fullPage } = context
   const schedules = await boss.getSchedules()
-  const content = `
+  const content = html`
     <h1 class="${UI.pageTitle}">${t('section.schedules', locale)}</h1>
-    <div class="${UI.card}"><div class="${UI.cardBody}">
-      ${schedulesTableHtml(schedules, prefix, locale, { includeCreated: true })}
-    </div></div>`
-  return fullPage(content, t('section.schedules', locale), csrfToken)
+    <section class="${UI.card}"><div class="${UI.cardBody}">
+      ${schedulesTableHtml({ schedules, includeCreated: true, prefix, locale, path, confirmDelete })}
+    </div></section>`
+  return fullPage(content, t('title.schedules', locale))
 }
 
-export async function statsPage(
-  boss: BaoBoss,
-  prefix: string,
-  locale: string,
-  fullPage: FullPageFn,
-  csrfToken?: string,
-): Promise<Response> {
-  const frag = await statsFragment(boss, prefix, locale)
-  const statsHtml = await frag.text()
-  const content = `
-    <h1 class="${UI.pageTitle}">${t('section.stats', locale)}</h1>
-    ${statsHtml}
-    <p class="${UI.metricsHint}"><a class="link link-hover" href="${prefix}/metrics">${t('link.metricsScrape', locale)}</a></p>`
-  return fullPage(content, t('title.stats', locale), csrfToken)
+/** The stats block as the live stream sends it. */
+export async function renderLiveStats(boss: BaoBoss, locale: string): Promise<string> {
+  return String(statsHtml(await collectStats(boss), locale))
 }
 
-export async function bulkRetryJobs(boss: BaoBoss, locale: string, ids: string[]): Promise<Response> {
-  await boss.resume(ids)
-  return fragmentResponse(`<span class="badge badge-success">${t('msg.bulkRetryDone', locale)}</span>`)
-}
-
-export async function bulkCancelJobs(boss: BaoBoss, locale: string, ids: string[]): Promise<Response> {
-  await boss.cancel(ids)
-  return fragmentResponse(`<span class="badge badge-ghost">${t('msg.bulkCancelDone', locale)}</span>`)
-}
-
-export async function deleteSchedule(boss: BaoBoss, name: string): Promise<Response> {
-  await boss.unschedule(name)
-  return fragmentResponse('')
+/** The queue table as the live stream sends it. */
+export async function renderLiveQueues(
+  boss: BaoBoss, prefix: string, locale: string, search: string,
+): Promise<string> {
+  const queues = await listQueues(boss, search)
+  return String(queuesTableHtml({ queues, search, path: `${prefix}/queues`, prefix, locale }))
 }
 
 export async function metricsEndpoint(boss: BaoBoss): Promise<Response> {
-  const snapshot = getMetricsSnapshot()
+  const snapshot = boss.metrics.snapshot()
   snapshot.queueDepth = await getQueueDepths(boss.prisma)
   return new Response(toPrometheusFormat(snapshot), {
-    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+    headers: { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' },
   })
 }
 
-export async function statsFragment(
-  boss: BaoBoss,
-  prefix: string,
-  locale: string,
-): Promise<Response> {
-  const queues = await boss.getQueues()
-  const [totalJobs, activeJobs, failedJobs, completedJobs] = await Promise.all([
-    boss.prisma.job.count(),
-    boss.prisma.job.count({ where: { state: 'active' } }),
-    boss.prisma.job.count({ where: { state: 'failed' } }),
-    boss.prisma.job.count({ where: { state: 'completed' } }),
-  ])
-  return fragmentResponse(`
-    <div class="${UI.stats}" role="region" aria-label="${t('aria.dashboardStats', locale)}" hx-get="${prefix}/stats" hx-trigger="every 10s" hx-swap="outerHTML">
-      <div class="stat"><div class="stat-value text-primary">${queues.length}</div><div class="stat-title">${t('stat.queues', locale)}</div></div>
-      <div class="stat"><div class="stat-value text-primary">${totalJobs}</div><div class="stat-title">${t('stat.totalJobs', locale)}</div></div>
-      <div class="stat"><div class="stat-value text-primary">${activeJobs}</div><div class="stat-title">${t('stat.active', locale)}</div></div>
-      <div class="stat"><div class="stat-value text-primary">${completedJobs}</div><div class="stat-title">${t('stat.completed', locale)}</div></div>
-      <div class="stat"><div class="stat-value text-primary">${failedJobs}</div><div class="stat-title">${t('stat.failed', locale)}</div></div>
-    </div>`)
-}

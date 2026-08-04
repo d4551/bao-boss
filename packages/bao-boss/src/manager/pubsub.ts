@@ -1,40 +1,35 @@
-import { PrismaClient, Prisma } from '../generated/prisma/client.js'
-import { Value } from '@sinclair/typebox/value'
+import { PrismaClient } from '../generated/prisma/client.js'
 import type { SendOptions } from '../types.js'
-import { sendOptionsSchema, resolveStartAfter } from './mappers.js'
+import { createJobs, decodeSendOptions, type JobRequest } from './job-create.js'
 
 export class PubSubOps {
-  constructor(
-    private readonly prisma: PrismaClient,
-  ) {}
+  constructor(private readonly prisma: PrismaClient) {}
 
+  /**
+   * Fan an event out to every subscribed queue.
+   *
+   * Subscriber jobs are built by the same owner `send` uses, so a published job
+   * inherits its queue's retry, expiry and retention settings identically.
+   */
   async publish(event: string, data?: unknown, options?: SendOptions): Promise<void> {
-    const subs = await this.prisma.subscription.findMany({ where: { event } })
+    const subs = await this.prisma.subscription.findMany({
+      where: { event },
+      select: { queue: true },
+    })
     if (subs.length === 0) return
 
-    await this.prisma.$transaction(async (tx) => {
-      for (const sub of subs) {
-        const opts = Value.Decode(sendOptionsSchema, options ?? {})
-        const queue = await tx.queue.findUnique({ where: { name: sub.queue } })
-        await tx.job.create({
-          data: {
-            queue: sub.queue,
-            data: data as Prisma.InputJsonValue,
-            priority: opts.priority ?? 0,
-            startAfter: resolveStartAfter(opts.startAfter),
-            retryLimit: opts.retryLimit ?? queue?.retryLimit ?? 2,
-            retryDelay: opts.retryDelay ?? queue?.retryDelay ?? 0,
-            retryBackoff: opts.retryBackoff ?? queue?.retryBackoff ?? false,
-            retryJitter: opts.retryJitter ?? queue?.retryJitter ?? false,
-            expireIn: opts.expireIn ?? queue?.expireIn ?? 900,
-            expireIfNotStartedIn: opts.expireIfNotStartedIn,
-            deadLetter: queue?.deadLetter,
-            policy: queue?.policy ?? 'standard',
-            keepUntil: new Date(Date.now() + (queue?.retentionDays ?? 14) * 24 * 60 * 60 * 1000),
-          },
-        })
-      }
-    })
+    const opts = decodeSendOptions(options)
+    const names = [...new Set(subs.map(sub => sub.queue))]
+    const queueRows = await this.prisma.queue.findMany({ where: { name: { in: names } } })
+    const queues = new Map(queueRows.map(row => [row.name, row]))
+
+    const requests: JobRequest[] = subs.map(sub => ({
+      queue: sub.queue,
+      data,
+      opts,
+      queueRow: queues.get(sub.queue) ?? null,
+    }))
+    await createJobs(this.prisma, requests)
   }
 
   async subscribe(event: string, queue: string): Promise<void> {
@@ -46,8 +41,6 @@ export class PubSubOps {
   }
 
   async unsubscribe(event: string, queue: string): Promise<void> {
-    await this.prisma.subscription.delete({
-      where: { event_queue: { event, queue } },
-    })
+    await this.prisma.subscription.delete({ where: { event_queue: { event, queue } } })
   }
 }

@@ -1,115 +1,195 @@
 import type { PrismaClient } from './generated/prisma/client.js'
+import { MS_PER_SECOND } from './defaults.js'
+
+export interface QueueMetrics {
+  processed: number
+  failed: number
+  durationSeconds: number
+}
 
 export interface MetricsSnapshot {
   jobsProcessedTotal: number
   jobsFailedTotal: number
   queueDepth: Record<string, number>
   processingDurationSeconds: number
-  perQueue: Record<string, { processed: number; failed: number; durationSeconds: number }>
+  perQueue: Record<string, QueueMetrics>
 }
 
-const counters: { processed: number; failed: number; durationMs: number } = {
-  processed: 0,
-  failed: 0,
-  durationMs: 0,
+interface Counters {
+  processed: number
+  failed: number
+  durationMs: number
 }
 
-const perQueue: Map<string, { processed: number; failed: number; durationMs: number }> = new Map()
+function emptyCounters(): Counters {
+  return { processed: 0, failed: 0, durationMs: 0 }
+}
 
-function getQueueCounters(queue: string): { processed: number; failed: number; durationMs: number } {
-  let c = perQueue.get(queue)
-  if (!c) {
-    c = { processed: 0, failed: 0, durationMs: 0 }
-    perQueue.set(queue, c)
+/**
+ * Per-instance metrics store.
+ *
+ * Owned by a `BaoBoss` instance rather than the module, so two instances in one
+ * process — the common case in tests and in multi-tenant hosts — report their
+ * own numbers instead of a shared running total nobody can attribute or reset.
+ */
+export class MetricsRegistry {
+  private readonly totals: Counters = emptyCounters()
+  private readonly perQueue = new Map<string, Counters>()
+
+  private counters(queue: string): Counters {
+    let entry = this.perQueue.get(queue)
+    if (!entry) {
+      entry = emptyCounters()
+      this.perQueue.set(queue, entry)
+    }
+    return entry
   }
-  return c
-}
 
-export function recordJobCompleted(queue?: string): void {
-  counters.processed++
-  if (queue) {
-    getQueueCounters(queue).processed++
+  recordJobCompleted(queue: string, count = 1): void {
+    this.totals.processed += count
+    this.counters(queue).processed += count
   }
-}
 
-export function recordJobFailed(queue?: string): void {
-  counters.failed++
-  if (queue) {
-    getQueueCounters(queue).failed++
+  recordJobFailed(queue: string, count = 1): void {
+    this.totals.failed += count
+    this.counters(queue).failed += count
   }
-}
 
-export function recordProcessingDuration(ms: number, queue?: string): void {
-  counters.durationMs += ms
-  if (queue) {
-    getQueueCounters(queue).durationMs += ms
+  recordProcessingDuration(ms: number, queue: string): void {
+    this.totals.durationMs += ms
+    this.counters(queue).durationMs += ms
   }
-}
 
-export function getMetricsSnapshot(): MetricsSnapshot {
-  const perQueueSnapshot: Record<string, { processed: number; failed: number; durationSeconds: number }> = {}
-  for (const [queue, c] of perQueue) {
-    perQueueSnapshot[queue] = {
-      processed: c.processed,
-      failed: c.failed,
-      durationSeconds: c.durationMs / 1000,
+  /** Drop all recorded values. */
+  reset(): void {
+    this.totals.processed = 0
+    this.totals.failed = 0
+    this.totals.durationMs = 0
+    this.perQueue.clear()
+  }
+
+  snapshot(): MetricsSnapshot {
+    const perQueue: Record<string, QueueMetrics> = {}
+    for (const [queue, counters] of this.perQueue) {
+      perQueue[queue] = {
+        processed: counters.processed,
+        failed: counters.failed,
+        durationSeconds: counters.durationMs / MS_PER_SECOND,
+      }
+    }
+    return {
+      jobsProcessedTotal: this.totals.processed,
+      jobsFailedTotal: this.totals.failed,
+      queueDepth: {},
+      processingDurationSeconds: this.totals.durationMs / MS_PER_SECOND,
+      perQueue,
     }
   }
-  return {
-    jobsProcessedTotal: counters.processed,
-    jobsFailedTotal: counters.failed,
-    queueDepth: {},
-    processingDurationSeconds: counters.durationMs / 1000,
-    perQueue: perQueueSnapshot,
-  }
 }
 
+/** Pending (created or active) job count per queue, in one grouped query. */
 export async function getQueueDepths(prisma: PrismaClient): Promise<Record<string, number>> {
-  const queues = await prisma.queue.findMany({ select: { name: true } })
+  const [queues, grouped] = await Promise.all([
+    prisma.queue.findMany({ select: { name: true } }),
+    prisma.job.groupBy({
+      by: ['queue'],
+      where: { state: { in: ['created', 'active'] } },
+      _count: true,
+    }),
+  ])
+  const counts = new Map(grouped.map(row => [row.queue, row._count]))
   const depths: Record<string, number> = {}
-  for (const q of queues) {
-    const count = await prisma.job.count({
-      where: { queue: q.name, state: { in: ['created', 'active'] } },
-    })
-    depths[q.name] = count
+  for (const queue of queues) {
+    depths[queue.name] = counts.get(queue.name) ?? 0
   }
   return depths
 }
 
 /**
- * Prometheus text format export
+ * Escape a Prometheus label value.
+ *
+ * Required by the exposition format: an unescaped `"` or newline in a queue name
+ * lets that name close the label set and append forged metric lines to the scrape.
  */
+export function escapeLabelValue(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+}
+
+interface MetricSeries {
+  name: string
+  help: string
+  type: 'counter' | 'gauge'
+  samples: Iterable<readonly [labels: Record<string, string>, value: number]>
+}
+
+function renderSeries(series: MetricSeries): string[] {
+  const lines = [`# HELP ${series.name} ${series.help}`, `# TYPE ${series.name} ${series.type}`]
+  for (const [labels, value] of series.samples) {
+    const rendered = Object.entries(labels)
+      .map(([key, label]) => `${key}="${escapeLabelValue(label)}"`)
+      .join(',')
+    lines.push(rendered.length > 0 ? `${series.name}{${rendered}} ${value}` : `${series.name} ${value}`)
+  }
+  return lines
+}
+
+function* queueSamples(
+  perQueue: Record<string, QueueMetrics>,
+  pick: (metrics: QueueMetrics) => number,
+): Generator<readonly [Record<string, string>, number]> {
+  for (const [queue, metrics] of Object.entries(perQueue)) {
+    yield [{ queue }, pick(metrics)]
+  }
+}
+
+/** Render a snapshot as Prometheus text exposition format. */
 export function toPrometheusFormat(snapshot: MetricsSnapshot): string {
-  const lines: string[] = [
-    '# HELP baoboss_jobs_processed_total Total jobs completed',
-    '# TYPE baoboss_jobs_processed_total counter',
-    `baoboss_jobs_processed_total ${snapshot.jobsProcessedTotal}`,
-    '# HELP baoboss_jobs_failed_total Total jobs failed',
-    '# TYPE baoboss_jobs_failed_total counter',
-    `baoboss_jobs_failed_total ${snapshot.jobsFailedTotal}`,
-    '# HELP baoboss_processing_duration_seconds Total processing time in seconds',
-    '# TYPE baoboss_processing_duration_seconds counter',
-    `baoboss_processing_duration_seconds ${snapshot.processingDurationSeconds}`,
+  const series: MetricSeries[] = [
+    {
+      name: 'baoboss_jobs_processed_total',
+      help: 'Total jobs completed',
+      type: 'counter',
+      samples: [[{}, snapshot.jobsProcessedTotal]],
+    },
+    {
+      name: 'baoboss_jobs_failed_total',
+      help: 'Total jobs failed',
+      type: 'counter',
+      samples: [[{}, snapshot.jobsFailedTotal]],
+    },
+    {
+      name: 'baoboss_processing_duration_seconds_total',
+      help: 'Total processing time in seconds',
+      type: 'counter',
+      samples: [[{}, snapshot.processingDurationSeconds]],
+    },
+    {
+      name: 'baoboss_queue_depth',
+      help: 'Pending jobs per queue',
+      type: 'gauge',
+      samples: Object.entries(snapshot.queueDepth).map(([queue, depth]) => [{ queue }, depth] as const),
+    },
+    {
+      name: 'baoboss_jobs_processed_per_queue_total',
+      help: 'Jobs completed per queue',
+      type: 'counter',
+      samples: queueSamples(snapshot.perQueue, m => m.processed),
+    },
+    {
+      name: 'baoboss_jobs_failed_per_queue_total',
+      help: 'Jobs failed per queue',
+      type: 'counter',
+      samples: queueSamples(snapshot.perQueue, m => m.failed),
+    },
+    {
+      name: 'baoboss_processing_duration_per_queue_seconds_total',
+      help: 'Processing time per queue in seconds',
+      type: 'counter',
+      samples: queueSamples(snapshot.perQueue, m => m.durationSeconds),
+    },
   ]
-  lines.push('# HELP baoboss_queue_depth Pending jobs per queue')
-  lines.push('# TYPE baoboss_queue_depth gauge')
-  for (const [queue, depth] of Object.entries(snapshot.queueDepth)) {
-    lines.push(`baoboss_queue_depth{queue="${queue}"} ${depth}`)
-  }
-  lines.push('# HELP baoboss_jobs_processed_per_queue Jobs completed per queue')
-  lines.push('# TYPE baoboss_jobs_processed_per_queue counter')
-  for (const [queue, stats] of Object.entries(snapshot.perQueue)) {
-    lines.push(`baoboss_jobs_processed_per_queue{queue="${queue}"} ${stats.processed}`)
-  }
-  lines.push('# HELP baoboss_jobs_failed_per_queue Jobs failed per queue')
-  lines.push('# TYPE baoboss_jobs_failed_per_queue counter')
-  for (const [queue, stats] of Object.entries(snapshot.perQueue)) {
-    lines.push(`baoboss_jobs_failed_per_queue{queue="${queue}"} ${stats.failed}`)
-  }
-  lines.push('# HELP baoboss_processing_duration_per_queue_seconds Processing time per queue in seconds')
-  lines.push('# TYPE baoboss_processing_duration_per_queue_seconds counter')
-  for (const [queue, stats] of Object.entries(snapshot.perQueue)) {
-    lines.push(`baoboss_processing_duration_per_queue_seconds{queue="${queue}"} ${stats.durationSeconds}`)
-  }
-  return lines.join('\n')
+  return series.flatMap(renderSeries).join('\n')
 }

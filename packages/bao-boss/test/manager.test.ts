@@ -3,9 +3,7 @@ import { BaoBoss } from '../src/BaoBoss'
 
 // Tests require a running PostgreSQL instance
 // DATABASE_URL must be set
-const skip = !Bun.env['DATABASE_URL']
-
-describe.skipIf(skip)('Manager', () => {
+describe('Manager', () => {
   let boss: BaoBoss
 
   beforeAll(async () => {

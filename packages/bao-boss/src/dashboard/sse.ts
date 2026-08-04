@@ -1,85 +1,46 @@
 import type { BaoBoss } from '../BaoBoss.js'
 import { t } from '../i18n.js'
-import { progressBarHtml } from './html.js'
+import { MS_PER_SECOND } from '../defaults.js'
+import { progressBarHtml } from './html-jobs.js'
+import { eventStream } from './sse-stream.js'
 
-export async function sseProgress(
-  boss: BaoBoss,
-  _prefix: string,
-  locale: string,
-  id: string,
-  queryLocale?: string,
-): Promise<Response> {
-  const loc = queryLocale || locale
+/** How often a live stream re-reads the database. */
+export const LIVE_POLL_INTERVAL_MS = 2 * MS_PER_SECOND
+
+const TERMINAL_STATES = new Set(['completed', 'failed', 'cancelled'])
+
+/**
+ * Stream one job's progress bar.
+ *
+ * The stream closes as soon as the job settles rather than leaving the bar
+ * frozen at its last value with nothing to say the updates stopped.
+ */
+export async function sseProgress(boss: BaoBoss, locale: string, id: string): Promise<Response> {
   const job = await boss.getJobById(id)
-  if (!job) {
-    return new Response(t('msg.jobNotFound', loc), { status: 404 })
-  }
-  const terminalStates = ['completed', 'failed', 'cancelled']
-  if (terminalStates.includes(job.state)) {
-    return new Response(t('msg.jobAlreadyFinished', loc), { status: 400 })
+  if (!job) return new Response(t('msg.jobNotFound', locale), { status: 404 })
+  if (TERMINAL_STATES.has(job.state)) {
+    return new Response(t('msg.jobAlreadyFinished', locale), { status: 409 })
   }
 
-  let intervalId: ReturnType<typeof setInterval> | null = null
-  let closed = false
+  let lastProgress = job.progress ?? null
 
-  const stream = new ReadableStream({
-    start(controller) {
-      const encoder = new TextEncoder()
-      let lastProgress: number | null = job.progress ?? null
-
-      const send = (event: string, data: string) => {
-        if (closed) return
-        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${data.replace(/\n/g, '\ndata: ')}\n\n`))
-      }
-
-      const stop = () => {
-        if (intervalId !== null) {
-          clearInterval(intervalId)
-          intervalId = null
-        }
-      }
-
-      send('progress', progressBarHtml(lastProgress, loc))
-
-      intervalId = setInterval(async () => {
-        if (closed) {
-          stop()
-          return
-        }
-        try {
-          const j = await boss.getJobById(id)
-          if (!j || terminalStates.includes(j.state)) {
-            stop()
-            send('close', '{}')
-            if (!closed) { closed = true; controller.close() }
-            return
-          }
-          const p = j.progress ?? null
-          if (p !== lastProgress) {
-            lastProgress = p
-            send('progress', progressBarHtml(p, loc))
-          }
-        } catch (err) {
-          stop()
-          boss.emit('error', err instanceof Error ? err : new Error(String(err)))
-          if (!closed) { closed = true; controller.close() }
-        }
-      }, 2000)
+  return eventStream({
+    intervalMs: LIVE_POLL_INTERVAL_MS,
+    onError: err => boss.emit('error', err),
+    onOpen(controller) {
+      controller.send('progress', String(progressBarHtml(lastProgress, locale)))
     },
-    cancel() {
-      closed = true
-      if (intervalId !== null) {
-        clearInterval(intervalId)
-        intervalId = null
+    async onTick(controller) {
+      const current = await boss.getJobById(id)
+      if (!current || TERMINAL_STATES.has(current.state)) {
+        controller.finish()
+        return
       }
-    },
-  })
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
+      const progress = current.progress ?? null
+      if (progress !== lastProgress) {
+        lastProgress = progress
+        controller.send('progress', String(progressBarHtml(progress, locale)))
+      }
     },
   })
 }

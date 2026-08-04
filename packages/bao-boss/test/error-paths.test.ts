@@ -2,9 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import { BaoBoss } from '../src/BaoBoss'
 import { uniqueName, createTestBoss, cleanupQueue } from './helpers'
 
-const skip = !Bun.env['DATABASE_URL']
-
-describe.skipIf(skip)('Error Paths', () => {
+describe('Error Paths', () => {
   let boss: BaoBoss
 
   beforeAll(async () => {
