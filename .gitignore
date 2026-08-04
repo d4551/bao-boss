@@ -10,3 +10,12 @@ package-lock.json
 
 # Prisma v7 generated client
 packages/bao-boss/src/generated/
+
+# Build and verification output
+*.tgz
+/packages/bao-boss/dist/
+/packages/bao-boss/.ui-verification/
+
+# Playwright
+test-results/
+playwright-report/

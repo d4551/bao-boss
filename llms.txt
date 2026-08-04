@@ -154,7 +154,6 @@ All tables in `baoboss` PostgreSQL schema:
 - `baoboss.schedule` — Cron schedules
 - `baoboss.subscription` — Pub/sub mappings
 - `baoboss.cron_lock` — Distributed lock for cron firing
-- `baoboss.debounce_state` — Debounced queue flush state
 - `baoboss.schema_version` — Migration tracking
 
 ## Events

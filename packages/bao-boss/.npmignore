@@ -1,7 +1,0 @@
-# Development & config
-test/
-scripts/
-tsconfig.json
-bunfig.toml
-.gitignore
-*.tgz

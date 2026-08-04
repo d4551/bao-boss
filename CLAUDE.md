@@ -39,30 +39,42 @@ bao-boss/
 │   │   ├── cron.ts           # Cron parser, validator, describer
 │   │   ├── schema.ts         # Schema name validation (centralized)
 │   │   ├── types.ts          # TypeScript type definitions
+│   │   ├── defaults.ts       # Every default value and time constant
+│   │   ├── cron-describe.ts  # Human rendering of a parsed cron expression
 │   │   ├── manager/          # Decomposed Manager modules
-│   │   │   ├── mappers.ts    # Prisma-to-domain type mappers
+│   │   │   ├── mappers.ts    # Schemas, JSON boundary, row-to-domain mapper
+│   │   │   ├── job-create.ts # The one job-creation path (singleton aware)
+│   │   │   ├── job-fetch.ts  # SKIP LOCKED query builder, rate limit, batching
 │   │   │   ├── queue-ops.ts  # Queue CRUD operations
-│   │   │   ├── job-ops.ts    # Job mutations (send, fetch, fail)
+│   │   │   ├── job-ops.ts    # Job mutations (send, fetch, complete, fail)
 │   │   │   ├── job-queries.ts # Job queries (search, deps, progress)
+│   │   │   ├── dlq.ts        # Dead-letter copies
 │   │   │   └── pubsub.ts     # Pub/Sub operations
 │   │   └── dashboard/        # Decomposed Dashboard modules
+│   │       ├── safe-html.ts  # The escaping boundary (html`` tag)
 │   │       ├── shell.ts      # Full-page shell + nav SSOT
 │   │       ├── ui.ts         # daisyUI/Tailwind class tokens
+│   │       ├── theme.ts      # Server-side theme negotiation
 │   │       ├── assets.ts     # Vendored static asset serving
 │   │       ├── bulk.ts       # Bulk body decode (TypeBox)
 │   │       ├── routes.ts     # Route handler functions
-│   │       ├── sse.ts        # SSE progress streaming
-│   │       ├── html.ts       # HTML rendering helpers
-│   │       ├── middleware.ts  # Auth, CSRF, rate limiting
-│   │       └── response.ts   # Response builders
-│   ├── assets/               # Vendored daisyUI/htmx/tailwind (no CDN)
+│   │       ├── sse-stream.ts # SSE plumbing (heartbeat, retry, close)
+│   │       ├── sse.ts        # Per-job progress stream
+│   │       ├── sse-live.ts   # Live counters and queue table stream
+│   │       ├── html.ts       # Shared markup helpers, queues, schedules
+│   │       ├── html-jobs.ts  # Job rows, table, detail, undo results
+│   │       ├── middleware.ts # Auth, CSRF, rate limiting
+│   │       └── response.ts   # Response builders, security headers
+│   ├── assets/               # Vendored daisyUI/htmx/tailwind + owned baoboss.css
 │   ├── scripts/
-│   │   └── lint.ts           # Project-specific lint
+│   │   ├── lint.ts           # Build-gate lint (src, test, scripts, css)
+│   │   ├── lint-rules.ts     # The rule table
+│   │   ├── verify-ui.ts      # Real-browser capture matrix
+│   │   └── verify-contrast.ts # WCAG contrast maths
 │   ├── prisma/
 │   │   ├── schema.prisma     # Prisma schema (baoboss namespace)
 │   │   └── migrations/       # Prisma migrations
-│   ├── sql/                  # Raw SKIP LOCKED query files
-│   └── test/                 # 18 test files, 96 tests
+│   └── test/                 # 28 test files, 225 tests
 ├── apps/example/             # Example Elysia app with dashboard
 ├── docker-compose.yaml       # PostgreSQL 17 for local dev
 └── package.json              # Bun workspace root
@@ -102,9 +114,9 @@ docker compose up -d                    # Start PostgreSQL
 bun install                             # Install dependencies
 cd packages/bao-boss && DATABASE_URL=postgresql://bao:bao@localhost:5432/bao bunx prisma generate  # Generate Prisma client
 DATABASE_URL=postgresql://bao:bao@localhost:5432/bao bunx prisma migrate deploy  # Run migrations
-DATABASE_URL=postgresql://bao:bao@localhost:5432/bao bun test  # Run tests
+DATABASE_URL=postgresql://bao:bao@localhost:5432/bao bun run validate:all  # typecheck + lint + tests
 cd apps/example && bun run dev          # Run example app
-cd packages/bao-boss && bun run lint    # Run project lint
+cd packages/bao-boss && bun run verify:ui  # Real-browser capture matrix (app must be running)
 ```
 
 ## Public API Surface
@@ -128,11 +140,14 @@ When modifying this codebase:
 - Return `Job<T>` generic types from all job-returning methods.
 - Emit errors via `boss.emit('error', err)` — never swallow errors silently.
 - Use `Bun.sleep` or `setTimeout` for delays, not busy-waiting.
-- Dashboard HTML is composed in `dashboard/` modules (shell/html/routes) — no template files; no CDN (assets under `packages/bao-boss/assets/`).
+- Dashboard HTML is composed in `dashboard/` modules (shell/html/html-jobs/routes) — no template files; no CDN (assets under `packages/bao-boss/assets/`, including the owned `baoboss.css`).
 - Dashboard: use `t()` from i18n.ts for all user-facing strings; use `UI` tokens from `dashboard/ui.ts` for classes; add ARIA attributes (`scope="col"`, `aria-label`, `type="button"`) on tables and buttons; primary nav via `navItems()` only.
 - Keep the CLI simple — each command creates a BaoBoss instance, performs one action, then stops.
-- Run `bun run lint` before committing — ensures 0 errors for typecasts, i18n, ARIA, HTMX, file/function length, DRY.
-- No `as unknown`, `as never`, `as any` typecasts — use typed domain mappers in `manager/mappers.ts`.
+- Run `bun run validate:all` before committing. The lint has no warning level and no suppression syntax — fix the finding, never silence it.
+- No `as unknown`, `as never`, `as any` typecasts, and no non-null assertions in `src/` — use the typed mappers in `manager/mappers.ts`.
 - Keep files under 350 lines and functions under 60 lines.
-- Import `validateSchema` from `schema.ts` (not local copies).
+- Import `validateSchema` and `GENERATED_SCHEMA` from `schema.ts` (never re-declare the regex or the namespace).
+- Import every default value and time constant from `defaults.ts`.
+- Build dashboard markup with the `html` tagged template from `dashboard/safe-html.ts`; class strings come from `dashboard/ui.ts`, copy from `i18n.ts`.
+- Nothing re-exports another module's symbol; `src/index.ts` is the only file that publishes.
 - Import `parseCron` from `cron.ts` (not local definitions).

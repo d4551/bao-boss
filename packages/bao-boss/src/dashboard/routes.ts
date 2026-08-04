@@ -69,7 +69,7 @@ export async function dashboardIndex(context: RouteContext): Promise<Response> {
         <div id="${LIVE_QUEUES_ID}" sse-swap="queues" hx-swap="innerHTML">
           ${queuesTableHtml({ queues, search: '', path: `${prefix}/queues`, prefix, locale })}
         </div>
-      </section></div>
+      </div></section>
     </div>
     <section class="${UI.card}"><div class="${UI.cardBody}">
       <h2 class="${UI.cardTitle}">${t('section.schedules', locale)}</h2>

@@ -4,6 +4,7 @@ import { secretsMatch } from '../src/dashboard/middleware'
 import { escapeHtml, html, raw, joinHtml } from '../src/dashboard/safe-html'
 import { minuteBucket, zonedWallClock } from '../src/Maintenance'
 import { resolveTheme, readCookie, nextTheme } from '../src/dashboard/theme'
+import { GENERATED_SCHEMA, validateSchema } from '../src/schema'
 
 describe('EventEmitter', () => {
   it('surfaces a listener error instead of swallowing it', () => {
@@ -123,5 +124,24 @@ describe('theme negotiation', () => {
   it('toggles between the two themes', () => {
     expect(nextTheme('light')).toBe('dark')
     expect(nextTheme('dark')).toBe('light')
+  })
+})
+
+describe('schema binding', () => {
+  it('matches the namespace the Prisma schema declares', async () => {
+    // The generated client and the migrations bind to one namespace; if these
+    // two ever disagree, half of every operation silently misses its tables.
+    const prismaSchema = await Bun.file(`${import.meta.dir}/../prisma/schema.prisma`).text()
+    const declared = [...prismaSchema.matchAll(/@@schema\("([a-z_][a-z0-9_]*)"\)/g)]
+      .map(match => match[1])
+    expect(new Set(declared)).toEqual(new Set([GENERATED_SCHEMA]))
+  })
+
+  it('accepts the generated namespace and rejects anything else', () => {
+    expect(validateSchema(GENERATED_SCHEMA)).toBe(GENERATED_SCHEMA)
+    expect(() => validateSchema('other')).toThrow('does not match')
+    expect(() => validateSchema('bad-name')).toThrow('Invalid schema name')
+    expect(() => validateSchema('1abc')).toThrow('Invalid schema name')
+    expect(() => validateSchema('a; DROP TABLE x')).toThrow('Invalid schema name')
   })
 })

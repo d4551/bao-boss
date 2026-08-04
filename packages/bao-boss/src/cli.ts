@@ -1,110 +1,174 @@
 #!/usr/bin/env bun
+/**
+ * The `bao` command.
+ *
+ * Each command opens a connection, does one thing, reports what actually
+ * happened, and exits with a status that reflects it. Output is operator-facing
+ * English; the message catalogue in i18n.ts owns the dashboard's copy, which is
+ * a different surface with a different audience.
+ */
 import { BaoBoss } from './BaoBoss.js'
+import { migrate as runMigrate } from './Migrate.js'
+import { describeCron } from './cron-describe.js'
 
-const [,, command, ...args] = process.argv
-
-const boss = new BaoBoss({ connectionString: Bun.env['DATABASE_URL'] ?? '' })
-
-async function cmdMigrate(prismaArgs: string[]) {
-  const proc = Bun.spawn(['bunx', 'prisma', 'migrate', ...prismaArgs], {
-    cwd: import.meta.dir + '/..',
-    stdout: 'inherit',
-    stderr: 'inherit',
-    env: Bun.env,
-  })
-  const exitCode = await proc.exited
-  if (exitCode !== 0) process.exit(exitCode)
+interface CliResult {
+  /** Lines to print. */
+  output: string[]
+  /** Process exit status. Non-zero when the command could not do its job. */
+  status: number
 }
 
-async function cmdQueues(boss: BaoBoss) {
-  await boss.start()
-  const queues = await boss.getQueues()
-  if (queues.length === 0) {
-    console.log('No queues found.')
-  } else {
-    console.log('Queues:')
-    for (const q of queues) {
-      const size = await boss.getQueueSize(q.name)
-      console.log(`  ${q.name} (${q.policy}) — ${size} pending`)
-    }
-  }
-  await boss.stop()
+function ok(...output: string[]): CliResult {
+  return { output, status: 0 }
 }
 
-async function cmdPurge(boss: BaoBoss, queueName: string) {
-  await boss.start()
-  await boss.purgeQueue(queueName)
-  console.log(`Purged queue: ${queueName}`)
-  await boss.stop()
+function fail(...output: string[]): CliResult {
+  return { output, status: 1 }
 }
 
-async function cmdRetry(boss: BaoBoss, id: string) {
-  await boss.start()
-  await boss.resume(id)
-  console.log(`Retrying job: ${id}`)
-  await boss.stop()
-}
-
-async function cmdScheduleList(boss: BaoBoss) {
-  await boss.start()
-  const schedules = await boss.getSchedules()
-  if (schedules.length === 0) {
-    console.log('No schedules.')
-  } else {
-    for (const s of schedules) {
-      console.log(`  ${s.name}: ${s.cron} (${s.timezone})`)
-    }
-  }
-  await boss.stop()
-}
-
-async function cmdScheduleRemove(boss: BaoBoss, name: string) {
-  await boss.start()
-  await boss.unschedule(name)
-  console.log(`Removed schedule: ${name}`)
-  await boss.stop()
-}
-
-function printUsage() {
-  console.log(`bao-boss CLI
+export const USAGE = `bao-boss CLI
 
 Commands:
-  bao migrate           Run pending Prisma migrations
-  bao migrate:reset     Drop & recreate the baoboss schema
-  bao queues            List all queues and job counts
-  bao purge <queue>     Purge pending jobs from a queue
-  bao retry <id>        Re-enqueue a specific failed job
-  bao schedule:ls       List all cron schedules
+  bao migrate             Apply pending migrations and record the schema version
+  bao queues              List queues with their pending counts
+  bao purge <queue>       Delete waiting jobs from a queue
+  bao retry <id>          Re-enqueue one failed or cancelled job
+  bao schedule:ls         List cron schedules
   bao schedule:rm <name>  Remove a cron schedule
-`)
+  bao help                Show this message
+`
+
+async function cmdMigrate(boss: BaoBoss): Promise<CliResult> {
+  await runMigrate(boss.prisma)
+  return ok('Migrations applied.')
 }
 
-async function main() {
+async function cmdQueues(boss: BaoBoss): Promise<CliResult> {
+  const queues = await boss.getQueues()
+  if (queues.length === 0) return ok('No queues.')
+  // One grouped query rather than one per queue.
+  const sizes = await boss.getQueueSizes(queues.map(queue => queue.name))
+  return ok(
+    'Queues:',
+    ...queues.map(queue => `  ${queue.name} (${queue.policy}) — ${sizes.get(queue.name) ?? 0} pending`),
+  )
+}
+
+async function cmdPurge(boss: BaoBoss, queueName: string): Promise<CliResult> {
+  if (!(await boss.getQueue(queueName))) {
+    return fail(`No such queue: ${queueName}`)
+  }
+  const before = await boss.getQueueSize(queueName, { before: 'active' })
+  await boss.purgeQueue(queueName)
+  return ok(`Purged ${before} waiting job(s) from ${queueName}.`)
+}
+
+async function cmdRetry(boss: BaoBoss, id: string): Promise<CliResult> {
+  const job = await boss.getJobById(id)
+  if (!job) return fail(`No such job: ${id}`)
+  if (job.state !== 'failed' && job.state !== 'cancelled') {
+    return fail(`Job ${id} is ${job.state}; only failed or cancelled jobs can be retried.`)
+  }
+  await boss.resume(id)
+  return ok(`Re-enqueued ${id} on ${job.queue}.`)
+}
+
+async function cmdScheduleList(boss: BaoBoss): Promise<CliResult> {
+  const schedules = await boss.getSchedules()
+  if (schedules.length === 0) return ok('No schedules.')
+  return ok(...schedules.map(schedule => {
+    let description: string
+    try {
+      description = describeCron(schedule.cron)
+    } catch {
+      description = 'unreadable'
+    }
+    return `  ${schedule.name}: ${schedule.cron} (${schedule.timezone}) — ${description}`
+  }))
+}
+
+async function cmdScheduleRemove(boss: BaoBoss, name: string): Promise<CliResult> {
+  const existing = await boss.getSchedules()
+  if (!existing.some(schedule => schedule.name === name)) {
+    return fail(`No such schedule: ${name}`)
+  }
+  await boss.unschedule(name)
+  return ok(`Removed schedule: ${name}`)
+}
+
+/**
+ * Run one command against an already-started instance.
+ * Returns what to print and the status to exit with, so the behaviour is
+ * testable without spawning a process or capturing stdout.
+ */
+export async function runCommand(
+  boss: BaoBoss,
+  command: string | undefined,
+  args: readonly string[],
+): Promise<CliResult> {
   switch (command) {
-    case 'migrate':       return cmdMigrate(['deploy'])
-    case 'migrate:reset': return cmdMigrate(['reset', '--force'])
-    case 'queues':        return cmdQueues(boss)
+    case 'migrate':
+      return cmdMigrate(boss)
+    case 'queues':
+      return cmdQueues(boss)
     case 'purge': {
       const queue = args[0]
-      if (!queue) { console.error('Usage: bao purge <queue>'); process.exit(1) }
-      return cmdPurge(boss, queue)
+      return queue ? cmdPurge(boss, queue) : fail('Usage: bao purge <queue>')
     }
     case 'retry': {
       const id = args[0]
-      if (!id) { console.error('Usage: bao retry <id>'); process.exit(1) }
-      return cmdRetry(boss, id)
+      return id ? cmdRetry(boss, id) : fail('Usage: bao retry <id>')
     }
-    case 'schedule:ls':   return cmdScheduleList(boss)
+    case 'schedule:ls':
+      return cmdScheduleList(boss)
     case 'schedule:rm': {
       const name = args[0]
-      if (!name) { console.error('Usage: bao schedule:rm <name>'); process.exit(1) }
-      return cmdScheduleRemove(boss, name)
+      return name ? cmdScheduleRemove(boss, name) : fail('Usage: bao schedule:rm <name>')
     }
-    default:              return printUsage()
+    case 'help':
+    case undefined:
+      return ok(USAGE)
+    default:
+      // An unrecognised command is a mistake, so say so and exit non-zero
+      // rather than printing help as though nothing were wrong.
+      return fail(`Unknown command: ${command}`, '', USAGE)
   }
 }
 
-main().catch(err => {
-  console.error(err)
-  process.exit(1)
-})
+/** Commands that need neither a connection nor DATABASE_URL. */
+const OFFLINE_COMMANDS = new Set(['help', undefined])
+
+async function main(): Promise<void> {
+  const [, , command, ...args] = process.argv
+
+  if (OFFLINE_COMMANDS.has(command)) {
+    console.log(USAGE)
+    return
+  }
+
+  const connectionString = Bun.env['DATABASE_URL']
+  if (!connectionString) {
+    console.error('DATABASE_URL is not set.')
+    process.exit(1)
+  }
+
+  const boss = new BaoBoss({ connectionString, noSupervisor: true })
+  try {
+    await boss.start()
+    const result = await runCommand(boss, command, args)
+    for (const line of result.output) {
+      if (result.status === 0) console.log(line)
+      else console.error(line)
+    }
+    if (result.status !== 0) process.exitCode = result.status
+  } finally {
+    await boss.stop()
+  }
+}
+
+if (import.meta.main) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error))
+    process.exit(1)
+  })
+}

@@ -6,6 +6,8 @@
  * through here so a change lands in exactly one place.
  */
 
+import { GENERATED_SCHEMA } from './schema.js'
+
 // ── Time ─────────────────────────────────────────────────────────────
 
 export const MS_PER_SECOND = 1_000
@@ -60,7 +62,7 @@ export const WORKER_DEFAULTS = {
 } as const
 
 export const BOSS_DEFAULTS = {
-  schema: 'baoboss',
+  schema: GENERATED_SCHEMA,
   maintenanceIntervalSeconds: 120,
   /** 12 hours. */
   archiveCompletedAfterSeconds: 12 * 60 * 60,

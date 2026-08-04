@@ -3,6 +3,7 @@ import { t } from '../i18n.js'
 /** Assets this dashboard serves, and nothing else — the name is never a path. */
 const ASSET_FILES = {
   'daisyui.css': 'text/css; charset=utf-8',
+  'favicon.svg': 'image/svg+xml; charset=utf-8',
   'baoboss.css': 'text/css; charset=utf-8',
   'tailwind-browser.js': 'text/javascript; charset=utf-8',
   'htmx.min.js': 'text/javascript; charset=utf-8',

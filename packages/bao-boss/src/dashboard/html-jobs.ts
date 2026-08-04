@@ -56,7 +56,7 @@ function jobRowHtml(job: Job, context: RenderContext): SafeHtml {
       ? html`<input type="checkbox" class="${UI.checkbox}" name="ids" value="${job.id}"
           aria-label="${tf('aria.selectJob', { id: shortId }, locale)}">`
       : EMPTY}</td>
-    <td><a href="${prefix}/jobs/${job.id}" class="${UI.link}">${shortId}</a></td>
+    <td><a href="${prefix}/jobs/${job.id}" class="${UI.linkId}">${shortId}</a></td>
     <td><span class="${stateBadgeClass(job.state)}">${formatState(job.state, locale)}</span></td>
     ${numericCell(job.priority, locale)}
     <td>${timestamp(job.createdOn, locale)}</td>

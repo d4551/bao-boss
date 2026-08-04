@@ -117,13 +117,34 @@
    * scrolls to. */
   .bao-scroll-offset { scroll-margin-block-start: 5rem; }
 
+  /* Anything a finger has to hit gets the WCAG 2.5.8 minimum box, even when
+   * its text is only one line tall. */
+  .bao-target {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: 1.5rem;
+    min-inline-size: 1.5rem;
+  }
+
+  /* The drawer opens from a visually hidden checkbox whose pointer target is
+   * the adjacent label. Focus lands on the checkbox and would otherwise be
+   * invisible, so paint the ring on the control the viewer can see. */
+  .drawer:has(.drawer-toggle:focus-visible) .bao-drawer-button {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+  }
+
   /* ── Data ──────────────────────────────────────────────────────── */
 
-  /* Digits share a width so figures line up column to column. */
+  /* Digits share a width so figures line up column to column. Table cells are
+   * end-aligned for comparison; a stacked stat keeps its value beside its
+   * label rather than pushed to the opposite edge of the card. */
   .bao-numeric {
     font-variant-numeric: tabular-nums;
     text-align: end;
   }
+
+  .stat .bao-numeric { text-align: start; }
 
   /* Identifiers are for copying: wrap them instead of truncating to an
    * ellipsis that silently destroys the value. */

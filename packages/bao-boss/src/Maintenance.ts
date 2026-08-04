@@ -5,6 +5,7 @@ import { createDlqJobs, type DlqRow } from './manager/dlq.js'
 import { buildJobCreateData, decodeSendOptions } from './manager/job-create.js'
 import { validateSchema } from './schema.js'
 import {
+  BOSS_DEFAULTS,
   CRON_LOCK_RETENTION_DAYS,
   CRON_LOCK_TTL_SECONDS,
   MS_PER_SECOND,
@@ -81,7 +82,7 @@ export class Maintenance {
     opts: MaintenanceOptions,
   ) {
     this.opts = opts
-    this.schema = validateSchema(opts.schema ?? 'baoboss')
+    this.schema = validateSchema(opts.schema ?? BOSS_DEFAULTS.schema)
   }
 
   start(): void {

@@ -117,6 +117,7 @@ ${html`<html lang="${lang}" data-theme="${theme}">
   <meta name="color-scheme" content="light dark">
   ${csrfMeta}
   <title>${title}</title>
+  <link href="${prefix}/assets/favicon.svg" rel="icon" type="image/svg+xml">
   <link href="${prefix}/assets/daisyui.css" rel="stylesheet" type="text/css">
   <link href="${prefix}/assets/baoboss.css" rel="stylesheet" type="text/css">
   <script src="${prefix}/assets/tailwind-browser.js"></script>
@@ -145,10 +146,7 @@ ${html`<html lang="${lang}" data-theme="${theme}">
     <div class="${UI.drawerSide}">
       <label for="${DRAWER_ID}" aria-label="${t('aria.closeMenu', locale)}" class="${UI.drawerOverlay}"></label>
       <nav class="${UI.sidebar}" aria-label="${t('aria.mainNav', locale)}">
-        <ul>
-          <li class="${UI.sidebarTitle}"><span>${t('nav.brand', locale)}</span></li>
-          ${navigation(options)}
-        </ul>
+        <ul>${navigation(options)}</ul>
       </nav>
     </div>
   </div>

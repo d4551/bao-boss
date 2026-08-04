@@ -1,6 +1,6 @@
 {
   "name": "bao-boss",
-  "version": "0.1.11",
+  "version": "0.2.0",
   "description": "Bun-native PostgreSQL job queue with SKIP LOCKED, retries, cron scheduling, pub/sub, dead letter queues, and an HTMX dashboard",
   "type": "module",
   "exports": {
@@ -19,7 +19,8 @@
     "prisma.config.ts",
     "assets",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "README.md"
   ],
   "engines": {
     "bun": ">=1.2.0"
@@ -32,7 +33,8 @@
     "db:generate": "bunx prisma generate",
     "db:migrate": "bunx prisma migrate deploy",
     "typecheck": "tsc --noEmit",
-    "validate:all": "bun run typecheck && bun run lint && bun test"
+    "validate:all": "bun run typecheck && bun run lint && bun test",
+    "verify:ui": "bun run scripts/verify-ui.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.4.2",
@@ -52,6 +54,7 @@
     "@prisma/client": "^7.4.2",
     "bun-types": "latest",
     "elysia": "^1.4.27",
+    "playwright": "^1.62.1",
     "prisma": "^7.4.2",
     "typescript": "^5.9.3"
   },

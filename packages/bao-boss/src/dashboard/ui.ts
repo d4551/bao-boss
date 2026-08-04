@@ -15,14 +15,13 @@ export const UI = {
   drawerSide: 'drawer-side bao-z-drawer',
   drawerOverlay: 'drawer-overlay',
   sidebar: 'menu bg-base-200 text-base-content min-h-full w-72 p-4 gap-1 bao-inset-safe bao-inset-safe-top',
-  sidebarTitle: 'menu-title text-base font-semibold',
   navbar: 'navbar bao-glass bg-primary text-primary-content px-3 sm:px-4 sticky top-0 bao-z-nav shadow-sm bao-inset-safe bao-inset-safe-top',
   navbarStart: 'navbar-start gap-2 bao-min-w-0',
   navbarEnd: 'navbar-end gap-1',
   navLink: 'btn btn-ghost min-h-11 h-11 px-3 justify-start',
   navLinkActive: 'btn btn-ghost btn-active min-h-11 h-11 px-3 justify-start',
   brand: 'font-bold text-lg px-1 truncate',
-  drawerButton: 'btn btn-ghost btn-square min-h-11 h-11 w-11 lg:hidden',
+  drawerButton: 'btn btn-ghost btn-square min-h-11 h-11 w-11 lg:hidden bao-drawer-button',
   icon: 'h-5 w-5',
   main: 'max-w-6xl mx-auto p-4 sm:p-6 lg:p-8 w-full bao-min-w-0 bao-inset-safe bao-inset-safe-bottom',
   skipLink: 'sr-only focus:not-sr-only focus:absolute focus:m-2 btn btn-primary min-h-11 h-11',
@@ -77,8 +76,10 @@ export const UI = {
   pagerStatus: 'text-sm text-base-content/70 bao-numeric px-2',
 
   // ── Feedback ────────────────────────────────────────────────────
-  link: 'link link-primary bao-id',
-  linkQuiet: 'link link-hover',
+  link: 'link link-primary bao-target',
+  /** For opaque identifiers, which must wrap rather than truncate. */
+  linkId: 'link link-primary bao-id bao-target',
+  linkQuiet: 'link link-hover bao-target',
   badge: 'badge',
   badgeNeutral: 'badge badge-ghost',
   badgeOk: 'badge badge-success',
